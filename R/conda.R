@@ -874,7 +874,8 @@ conda_run2_windows <-
     cmd_line
   ), fi)
 
-  shell(fi, intern = intern)
+  sh <- shell(fi, intern = intern)
+  return(sh[length(sh)])
 }
 
 conda_run2_nix <-
