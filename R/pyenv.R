@@ -1,6 +1,6 @@
 
 pyenv_root <- function() {
-  root <- rappdirs::user_data_dir("r-reticulate")
+  root <- user_data_dir("r-reticulate")
   dir.create(root, showWarnings = FALSE, recursive = TRUE)
   norm <- normalizePath(root, winslash = "/", mustWork = TRUE)
   file.path(norm, "pyenv")
@@ -34,6 +34,9 @@ pyenv_python <- function(version) {
 
   if (is.null(version))
     return(NULL)
+
+  if(grepl("^3\\.[0-9]+$", version))
+    version <- paste0(version, ":latest")
 
   if (endsWith(version, ":latest"))
     version <- pyenv_resolve_latest_patch(version, installed = TRUE)
@@ -92,7 +95,11 @@ pyenv_list <- function(pyenv = NULL, installed = FALSE) {
   output <- system2(pyenv, c("install", "--list"), stdout = TRUE, stderr = TRUE)
 
   # clean up output
-  versions <- tail(output, n = -1L)
+  # on some platforms, warnings from cmd.exe appear in the output
+  # also, there is a header like ":: [Info] ::  Mirror: https://www.python.org/ftp/python"
+  # https://github.com/rstudio/reticulate/issues/1390
+  header_end <- max(1L, grep("^:: \\[Info\\] :: .+$", output))
+  versions <- tail(output, n = -header_end)
   cleaned <- gsub("^\\s*", "", versions)
 
   # only include CPython interpreters for now
@@ -100,12 +107,14 @@ pyenv_list <- function(pyenv = NULL, installed = FALSE) {
 
 }
 
-pyenv_find <- function() {
-  pyenv <- pyenv_find_impl()
+pyenv_find <- function(install = TRUE) {
+  pyenv <- pyenv_find_impl(install = install)
+  if (isFALSE(install) && is.null(pyenv))
+    return(NULL)
   canonical_path(pyenv)
 }
 
-pyenv_find_impl <- function() {
+pyenv_find_impl <- function(install = TRUE) {
 
   # check for pyenv binary specified via option
   pyenv <- getOption("reticulate.pyenv", default = NULL)
@@ -133,20 +142,33 @@ pyenv_find_impl <- function() {
     return(pyenv)
 
   # all else fails, try to manually install pyenv
-  pyenv_bootstrap()
+  if(install)
+    pyenv_bootstrap()
+  else
+    NULL
 
 }
 
-pyenv_install <- function(version, force, pyenv = NULL) {
+pyenv_install <- function(version, force, pyenv = NULL, optimized = TRUE) {
 
-  pyenv <- normalizePath(
-    pyenv %||% pyenv_find(),
-    winslash = "/",
-    mustWork = TRUE
-  )
+  pyenv <- canonical_path(pyenv %||% pyenv_find())
+  stopifnot(file.exists(pyenv))
 
-  # set options
-  withr::local_envvar(PYTHON_CONFIGURE_OPTS = "--enable-shared")
+  if (optimized) {
+    withr::local_envvar(
+      PYTHON_CONFIGURE_OPTS = "--enable-shared --enable-optimizations --with-lto",
+      PYTHON_CFLAGS = "-march=native -mtune=native"
+    )
+  } else {
+    withr::local_envvar(
+      PYTHON_CONFIGURE_OPTS = "--enable-shared"
+    )
+  }
+
+  if(is_macos() &&
+     Sys.which("brew") == "" &&
+     file.exists("/opt/homebrew/bin/brew"))
+    withr::local_path("/opt/homebrew/bin")
 
   # build install arguments
   force <- if (force)
@@ -174,6 +196,9 @@ pyenv_bootstrap_windows <- function() {
     winslash = "/",
     mustWork = FALSE
   )
+
+  if (Sys.which("git") == "")
+    stop("Please install git and ensure it is on your PATH")
 
   # clone if necessary
   if (!file.exists(root)) {
@@ -207,10 +232,18 @@ pyenv_bootstrap_unix <- function() {
   on.exit(setwd(owd), add = TRUE)
 
   # pyenv python builds are substantially faster on macOS if we pre-install
-  # some dependencies (especially openssl@1.1) as pre-built but "untapped kegs"
+  # some dependencies (especially openssl) as pre-built but "untapped kegs"
   # (i.e., unlinked to somewhere on the PATH but tucked away under $BREW_ROOT/Cellar).
-  if (nzchar(Sys.which("brew")))
-    system("brew install --only-dependencies pyenv python@3.9")
+  if (is_macos()) {
+    brew <- Sys.which("brew")
+    if(brew == "" && file.exists(brew <- "/opt/homebrew/bin/brew"))
+      withr::local_path("/opt/homebrew/bin")
+
+    if(file.exists(brew)) {
+      system2t(brew, c("install -q openssl readline sqlite3 xz zlib tcl-tk"))
+      system2t(brew, c("install --only-dependencies pyenv python"))
+    }
+  }
 
   # download the installer
   url <- "https://github.com/pyenv/pyenv-installer/raw/master/bin/pyenv-installer"
@@ -240,16 +273,37 @@ pyenv_bootstrap_unix <- function() {
 
 
 pyenv_update <- function(pyenv = pyenv_find()) {
-  if (is_windows())
-    return(system2t(pyenv, "update"))
+
+  if (startsWith(pyenv, root <- pyenv_root())) {
+    # this pyenv installation is fully managed by reticulate
+    # root == where .../bin/pyenv lives
+    withr::with_dir(root, system2("git", "pull", stdout = FALSE, stderr = FALSE))
+  }
+
+  if (is_windows()) {
+   # `pyenv update` is very slow on windows, we need to throttle it.
+   # only update it once every 30 days
+    cache_file <- file.path(dirname(dirname(pyenv)), ".versions_cache.xml")
+
+    if (!file.exists(cache_file) ||
+        (Sys.Date() - as.Date(file.mtime(cache_file)) > 30))
+      system2t(pyenv, "update")
+    return()
+  }
 
   # $ git clone https://github.com/pyenv/pyenv-update.git $(pyenv root)/plugins/pyenv-update
+  # root == ~/.pyenv == where installed pythons live
   root <- system2(pyenv, "root", stdout = TRUE)
   if (!dir.exists(file.path(root, "plugins/pyenv-update")))
     system2("git", c("clone", "https://github.com/pyenv/pyenv-update.git",
                       file.path(root, "plugins/pyenv-update")))
 
-  system2t(pyenv, "update")
+  result <- system2t(pyenv, "update", stdout = FALSE, stderr = FALSE)
+  if (!identical(result, 0L)) {
+    fmt <- "Error updating pyenv [exit code %i]"
+    warningf(fmt, result)
+  }
+
 }
 
 #export PATH="$HOME/.local/share/r-reticulate/pyenv/bin/:$PATH"

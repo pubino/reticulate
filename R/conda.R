@@ -19,7 +19,8 @@
 #'
 #' @param packages A character vector, indicating package names which should be
 #'   installed or removed. Use  \verb{<package>==<version>} to request the installation
-#'   of a specific version of a package.
+#'   of a specific version of a package. A `NULL` value for [conda_remove()]
+#'   will be interpretted to `"--all"`, removing the entire environment.
 #'
 #' @param environment The path to an environment definition, generated via
 #'   (for example) [conda_export()], or via `conda env export`. When provided,
@@ -60,6 +61,12 @@
 #'
 #' @param all Boolean; report all instances of Python found?
 #'
+#' @param additional_create_args An optional character vector of additional
+#'   arguments to use in the call to `conda create`.
+#'
+#' @param additional_install_args An optional character vector of additional
+#'   arguments to use in the call to `conda install`.
+#'
 #' @param ... Optional arguments, reserved for future expansion.
 #'
 #'
@@ -79,7 +86,7 @@
 #' To force `reticulate` to use a particular `conda` binary, we recommend
 #' setting:
 #'
-#' ```
+#' ```r
 #' options(reticulate.conda_binary = "/path/to/conda")
 #' ```
 #'
@@ -87,6 +94,7 @@
 #' `reticulate` is unable to automatically discover.
 #'
 #' @name conda-tools
+#' @seealso [conda_run2()]
 NULL
 
 
@@ -103,11 +111,18 @@ conda_list <- function(conda = "auto") {
   conda <- conda_binary(conda)
   local_conda_paths(conda)
 
+  if (startsWith(basename(conda), "micromamba")) {
+    conda_envs <- system2(conda, c("env", "list", "--json"),
+                          stdout = TRUE, stderr = FALSE)
+
+  } else {
   # list envs -- discard stderr as Anaconda may emit warnings that can
   # otherwise be ignored; see e.g. https://github.com/rstudio/reticulate/issues/474
-  conda_envs <- suppressWarnings(
-    system2(conda, args = c("info", "--json"), stdout = TRUE, stderr = FALSE)
-  )
+    conda_envs <- suppressWarnings(
+      system2(conda, args = c("info", "--json"),
+              stdout = TRUE, stderr = FALSE)
+    )
+  }
 
   # check for error
   status <- attr(conda_envs, "status") %||% 0L
@@ -187,15 +202,18 @@ conda_create <- function(envname = NULL,
                          channel = character(),
                          environment = NULL,
                          conda = "auto",
-                         python_version = miniconda_python_version())
+                         python_version = miniconda_python_version(),
+                         additional_create_args = character())
 {
+  check_forbidden_install("Conda Environments")
+
   # resolve conda binary
   conda <- conda_binary(conda)
   local_conda_paths(conda)
 
   # if environment is provided, use it directly
   if (!is.null(environment))
-    return(conda_create_env(envname, environment, conda))
+    return(conda_create_env(envname, environment, conda, additional_create_args))
 
   # resolve environment name
   envname <- condaenv_resolve(envname)
@@ -227,8 +245,11 @@ conda_create <- function(envname = NULL,
   for (ch in channels)
     args <- c(args, "-c", ch)
 
+  # add additional arguments
+  args <- c(args, additional_create_args)
+
   # invoke conda
-  result <- system2t(conda, shQuote(args))
+  result <- system2t(conda, maybe_shQuote(args))
   if (result != 0L) {
     fmt <- "Error creating conda environment '%s' [exit code %i]"
     stopf(fmt, envname, result, call. = FALSE)
@@ -238,7 +259,9 @@ conda_create <- function(envname = NULL,
   conda_python(envname = envname, conda = conda)
 }
 
-conda_create_env <- function(envname, environment, conda) {
+conda_create_env <- function(envname, environment, conda, additional_create_args) {
+
+  check_forbidden_install("Conda Environments")
 
   if (!is.null(envname))
     envname <- condaenv_resolve(envname)
@@ -248,10 +271,11 @@ conda_create_env <- function(envname, environment, conda) {
     if (is.null(envname))
       c()
     else if (grepl("/", envname))
-      c("--prefix", shQuote(envname))
+      c("--prefix", maybe_shQuote(envname))
     else
-      c("--name", shQuote(envname)),
-    "-f", shQuote(environment)
+      c("--name", maybe_shQuote(envname)),
+    "-f", maybe_shQuote(environment),
+    additional_create_args
   )
 
   result <- system2t(conda, args)
@@ -290,7 +314,7 @@ conda_clone <- function(envname, ..., clone = "base", conda = "auto") {
   args <- c(args, "--clone", clone)
 
   # invoke conda
-  result <- system2t(conda, shQuote(args))
+  result <- system2t(conda, maybe_shQuote(args))
   if (result != 0L) {
     fmt <- "Error creating conda environment '%s' [exit code %i]"
     stopf(fmt, envname, result, call. = FALSE)
@@ -364,7 +388,7 @@ conda_remove <- function(envname,
 
   # remove packages (or the entire environment)
   args <- conda_args("remove", envname, packages)
-  result <- system2t(conda, shQuote(args))
+  result <- system2t(conda, maybe_shQuote(args))
   if (result != 0L) {
     stop("Error ", result, " occurred removing conda environment ", envname,
          call. = FALSE)
@@ -382,6 +406,8 @@ conda_install <- function(envname = NULL,
                           pip_ignore_installed = FALSE,
                           conda = "auto",
                           python_version = NULL,
+                          additional_create_args = character(),
+                          additional_install_args = character(),
                           ...)
 {
   check_forbidden_install("Python packages")
@@ -433,19 +459,31 @@ conda_install <- function(envname = NULL,
       packages = python_package %||% "python",
       forge = forge,
       channel = channel,
-      conda = conda
+      conda = conda,
+      additional_create_args = additional_create_args
     )
 
     python <- conda_python(envname = envname, conda = conda)
 
   }
 
+  # prepare user-requested channels
+  channels <- if (length(channel))
+    channel
+  else if (forge)
+    "conda-forge"
+
+  channel_args <- character()
+  for (ch in channels)
+    channel_args <- c(channel_args, "-c", ch)
+
   # if the user has requested a specific version of Python, ensure that
   # version of Python is installed into the requested environment
   # (should be no-op if that copy of Python already installed)
   if (!is.null(python_version)) {
     args <- conda_args("install", envname, python_package)
-    status <- system2t(conda, shQuote(args))
+    args <- c(args, channel_args, additional_install_args)
+    status <- system2t(conda, maybe_shQuote(args))
     if (status != 0L) {
       fmt <- "installation of '%s' into environment '%s' failed [error code %i]"
       msg <- sprintf(fmt, python_package, envname, status)
@@ -473,16 +511,10 @@ conda_install <- function(envname = NULL,
   args <- conda_args("install", envname)
 
   # add user-requested channels
-  channels <- if (length(channel))
-    channel
-  else if (forge)
-    "conda-forge"
+  args <- c(args, channel_args)
 
-  for (ch in channels)
-    args <- c(args, "-c", ch)
-
-  args <- c(args, python_package, packages)
-  result <- system2t(conda, shQuote(args))
+  args <- c(args, python_package, packages, additional_install_args)
+  result <- system2t(conda, maybe_shQuote(args))
 
   # check for errors
   if (result != 0L) {
@@ -499,7 +531,7 @@ conda_install <- function(envname = NULL,
 conda_binary <- function(conda = "auto") {
 
   # automatic lookup if requested
-  if (identical(conda, "auto")) {
+  if (identical(conda, "auto") || isTRUE(is.na(conda))) {
     conda <- find_conda()
     if (is.null(conda))
       stop("Unable to find conda binary. Is Anaconda installed?", call. = FALSE)
@@ -507,7 +539,7 @@ conda_binary <- function(conda = "auto") {
   }
 
   conda <- normalizePath(conda, winslash = "/", mustWork = FALSE)
-  if (!grepl("^(conda|mamba)", basename(conda)))
+  if (!grepl("^(conda|mamba|micromamba)", basename(conda)))
     warning("Supplied path is not a conda binary: ", sQuote(conda))
 
   # if the user has requested a conda binary in the 'condabin' folder,
@@ -515,7 +547,7 @@ conda_binary <- function(conda = "auto") {
   # we rely on other tools typically bundled in the 'bin' folder
   # https://github.com/rstudio/keras/issues/691
   if (!is_windows()) {
-    altpath <- file.path(dirname(conda), "../bin/conda")
+    altpath <- file.path(dirname(conda), "../bin", basename(conda))
     if (file.exists(altpath))
       return(normalizePath(altpath, winslash = "/", mustWork = TRUE))
   } else {
@@ -569,7 +601,7 @@ conda_update <- function(conda = "auto") {
   name <- if ("anaconda" %in% envlist$name) "anaconda" else "conda"
 
   # attempt update
-  system2t(conda, c("update", "--prefix", shQuote(prefix), "--yes", name))
+  system2t(conda, c("update", "--prefix", maybe_shQuote(prefix), "--yes", name))
 }
 
 numeric_conda_version <- function(conda = "auto", version_string = conda_version(conda)) {
@@ -627,6 +659,70 @@ conda_python <- function(envname = NULL,
   # of disambiguating this, but for now just pick the first one
   python <- if (all) env$python else env$python[[1L]]
   path.expand(python)
+}
+
+#' @returns
+#'   `conda_search()` returns an \R `data.frame` describing packages that
+#'   matched against `matchspec`. The data frame will usually include
+#'   fields `name` giving the package name, `version` giving the package
+#'   version, `build` giving the package build, and `channel` giving the
+#'   channel the package is hosted on.
+#'
+#' @param matchspec A conda MatchSpec query string.
+#'
+#' @rdname conda-tools
+#' @export
+conda_search <-
+  function(matchspec,
+           forge = TRUE,
+           channel = character(),
+           conda = "auto",
+           ...) {
+
+  conda <- conda_binary(conda)
+  local_conda_paths(conda)
+
+  args <- c("search", matchspec)
+
+  # add user-requested channels
+  channels <- if (length(channel))
+    channel
+  else if (forge)
+    "conda-forge"
+
+  for (ch in channels)
+    args <- c(args, "-c", ch)
+
+  args = c(args, "--json")
+  output <- system2(conda, shQuote(args), stdout = TRUE)
+  status <- attr(output, "status") %||% 0L
+  # check for errors
+  if (status != 0L) {
+    fmt <- "error searching for packages [error code %i]"
+    stopf(fmt, status)
+  }
+
+  parsed <- jsonlite::fromJSON(output)
+
+  all_colnames <- unique(unlist(lapply(parsed, names)))
+  df <- do.call(rbind, lapply(parsed, function(x) {
+    if(any(missing_cols <- setdiff(all_colnames, names(x))))
+      x[missing_cols] <- NA
+    x
+  }))
+  rownames(df) <- NULL
+
+  # reverse row order, so most recent versions are (likely) first. In an ideal
+  # world we'd use `order(numeric_version(df$version))`, but we can't depend on
+  # the version string being parseable.
+  if(nrow(df))
+    df <- df[rev(seq_len(nrow(df))), ]
+
+  # reorder columns
+  to_front <- intersect(c("name", "version", "build", "channel"), names(df))
+  df <- df[c(unique(to_front, names(df)))]
+
+  df
 }
 
 
@@ -724,6 +820,8 @@ condaenv_path <- function(envname = NULL) {
 
 }
 
+#' @export
+#' @rdname conda-tools
 condaenv_exists <- function(envname = NULL, conda = "auto") {
 
   # check that conda is installed
@@ -832,13 +930,56 @@ Run `miniconda_update('%s')` to update conda.", conda)
                    shQuote(cmd), args), ...)
 }
 
+#' Run a command in a conda environment
+#'
+#' This function runs a command in a chosen conda environment.
+#'
+#' Note that, whilst the syntax is similar to [`system2()`], the function
+#' dynamically generates a shell script with commands to activate the chosen
+#' conda environent. This avoids issues with quoting, as discussed in this
+#' [GitHub issue](https://github.com/conda/conda/issues/10972).
+#'
+#' @param cmd The system command to be invoked, as a character string.
+#' @param args A character vector of arguments to the command. The arguments should
+#'   be quoted e.g. by `shQuote()` in case they contain space or other special
+#'   characters (a double quote or backslash on Windows, shell-specific special
+#'   characters on Unix).
+#' @param cmd_line The command line to be executed, as a character string. This
+#'   is automatically generated from `cmd` and `args`, but can be provided
+#'   directly if needed (if provided, it overrides `cmd` and `args`).
+#' @param conda The path to a `conda` executable. Use `"auto"` to allow
+#'   `reticulate` to automatically find an appropriate `conda` binary.
+#'   See **Finding Conda** and [conda_binary()] for more details.
+#' @param envname The name of, or path to, a conda environment.
+#' @param intern A logical (not `NA`) which indicates whether to capture the
+#'   output of the command as an R character vector. If `FALSE` (the default), the
+#'   return value is the error code (`0` for success).
+#' @param echo A logical (not `NA`) which indicates whether to echo the command to
+#'   the console before running it.
+#'
+#'
+#' @returns
+#' `conda_run2()` runs a command in the desired conda environment. If
+#' `intern = TRUE` the output is returned as a character vector; if `intern = FALSE` (the
+#' deafult), then the return value is the error code (0 for success). See
+#' [shell()] (on windows) or [`system2()`] on macOS or Linux for more details.
+#'
+#' @export
+#' @seealso [`conda-tools`]
 # executes a cmd with a conda env active, implemented directly to avoid using `conda run`
 # https://github.com/conda/conda/issues/10972
-conda_run2 <- function(...) {
-  if (is_windows())
-    conda_run2_windows(...)
-  else
-    conda_run2_nix(...)
+conda_run2 <- function(cmd, args = c(), conda = "auto", envname = NULL,
+                       cmd_line = paste(shQuote(cmd), paste(args, collapse = " ")),
+                       intern = FALSE, echo = !intern) {
+  run <- if (is_windows()) conda_run2_windows else conda_run2_nix
+  run(
+    conda = conda,
+    envname = envname,
+    cmd_line = cmd_line,
+    intern = intern,
+    echo = echo
+  )
+
 }
 
 conda_run2_windows <-
@@ -884,7 +1025,6 @@ conda_run2_nix <-
            intern = FALSE, echo = !intern) {
   conda <- normalizePath(conda_binary(conda))
   local_conda_paths(conda)
-  activate <- normalizePath(file.path(dirname(conda), "activate"))
 
   if (!identical(envname, "base")) {
     envname <- condaenv_resolve(envname)
@@ -895,6 +1035,26 @@ conda_run2_nix <-
   fi <- tempfile(fileext = ".sh")
   on.exit(unlink(fi))
 
+  stdout <- if (identical(intern, FALSE)) "" else intern
+
+  if (startsWith(basename(conda), "micromamba")) {
+
+    envflag <- if(grepl("[/\\]", envname)) "-p" else "-n"
+    if(echo)
+      system2 <- system2t
+    result <- system2(conda, c('run', envflag, envname, cmd_line),
+                      stdout = stdout)
+
+    error_status <- attr(result, "status")
+    if (!is.null(error_status))
+      stop("Error ", error_status, " occurred while running conda command")
+
+    return(result)
+
+  }
+
+
+  activate <- normalizePath(file.path(dirname(conda), "activate"))
   commands <- c(
     paste(".", activate),
     if (!identical(envname, "base"))
@@ -910,8 +1070,8 @@ conda_run2_nix <-
       commands))
 
   writeLines(commands, fi)
-  system2(Sys.which("bash"), fi,
-          stdout = if (identical(intern, FALSE)) "" else intern)
+  system2(Sys.which("bash"), fi, stdout = stdout)
+
 }
 
 
@@ -947,18 +1107,60 @@ get_python_conda_info <- function(python) {
     else
       file.path(root, "bin/conda")
   } else {
-    # not base env, parse conda-meta history to find the conda binary
-    # that created it
-    conda <- python_info_condaenv_find(root)
+    # not base env
+    # in ArcGIS env, conda.exe lives in a parent directory
+    exe <- file.path(root, "../..", "Scripts", "conda.exe")
+    exe <- normalizePath(exe, winslash = "/", mustWork = FALSE)
+    if (is_windows() && file.exists(exe)) {
+      conda <- exe
+    } else {
+      # parse conda-meta history to find the conda binary that created it
+      conda <- conda_history_find(root)
+    }
   }
 
+  conda <- normalizePath(conda, winslash = "/", mustWork = FALSE)
+  if(!file.exists(conda))
+    conda <- NA
+
   list(
-    conda = normalizePath(conda, winslash = "/", mustWork = TRUE),
+    conda = conda,
     root = normalizePath(root, winslash = "/", mustWork = TRUE)
   )
 
 }
 
+
+conda_history_find <- function(path) {
+  exe <- if (is_windows()) "conda.exe" else "conda"
+
+  # read history file
+  histpath <- file.path(path, "conda-meta/history")
+  if (!file.exists(histpath))
+    return(NULL)
+
+  history <- readLines(histpath, warn = FALSE)
+
+  # look for cmd line
+  pattern <- "^[[:space:]]*#[[:space:]]*cmd:[[:space:]]*"
+  lines <- grep(pattern, history, value = TRUE)
+  if (length(lines) == 0)
+    return(NULL)
+
+  # get path to conda script used
+  script <- sub(
+    "^#\\s+cmd: (.+?)\\s+(env\\s+create|create|rename)\\s+.*",
+    "\\1", lines[[1]], perl = TRUE
+  )
+  # on Windows, a wrapper script is recorded in the history,
+  # so instead attempt to find the real conda binary
+  if(is_windows())
+    conda <- file.path(dirname(script), exe)
+  else
+    conda <- script
+  normalizePath(conda, winslash = "/", mustWork = FALSE)
+
+}
 
 conda_prefix <- function(conda = "auto") {
   conda <- normalizePath(conda_binary(conda),

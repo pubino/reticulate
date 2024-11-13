@@ -61,7 +61,7 @@ bool loadLibrary(const std::string& libPath, void** ppLib, std::string* pError)
   *ppLib = (void*)::LoadLibraryEx(libPath.c_str(), NULL, 0);
 #else
   if (libPath == "NA") {
-    *ppLib = ::dlopen(NULL, RTLD_NOW|RTLD_GLOBAL);
+    *ppLib = ::dlopen(NULL, RTLD_NOW|RTLD_GLOBAL); // on linux, should we also do: | RTLD_DEEPBIND ??
   } else {
     *ppLib = ::dlopen(libPath.c_str(), RTLD_NOW|RTLD_GLOBAL);
   }
@@ -88,8 +88,10 @@ bool loadSymbol(void* pLib, const std::string& name, void** ppSymbol, std::strin
 #endif
   if (*ppSymbol == NULL)
   {
-    lastDLErrorMessage(pError);
-    *pError = name + " - " + *pError;
+    if (pError != NULL) {
+      lastDLErrorMessage(pError);
+      *pError = name + " - " + *pError;
+    }
     return false;
   }
   else
@@ -151,6 +153,18 @@ void initialize_type_objects(bool python3) {
   Py_List = Py_BuildValue("[i]", 1024);
   Py_Complex = PyComplex_FromDoubles(0.0, 0.0);
   Py_ByteArray = PyByteArray_FromStringAndSize("a", 1);
+  Py_DictClass = PyObject_Type(Py_Dict);
+
+  PyObject* builtins = PyImport_AddModule(python3 ? "builtins" : "__builtin__"); // borrowed ref
+  if (builtins == NULL) goto error;
+  PyExc_KeyboardInterrupt = PyObject_GetAttrString(builtins, "KeyboardInterrupt"); // new ref
+  PyExc_RuntimeError = PyObject_GetAttrString(builtins, "RuntimeError"); // new ref
+  PyExc_AttributeError = PyObject_GetAttrString(builtins, "AttributeError"); // new ref
+
+  if (PyErr_Occurred()) { error:
+     // Should never happen. If you see this please report a bug.
+     PyErr_Print();
+  }
 }
 
 #define LOAD_PYTHON_SYMBOL_AS(name, as)             \
@@ -161,26 +175,44 @@ if (!loadSymbol(pLib_, #name, (void**)&as, pError)) \
 if (!loadSymbol(pLib_, #name, (void**) &libpython::name, pError)) \
   return false;
 
-bool SharedLibrary::load(const std::string& libPath, bool python3, std::string* pError)
+bool SharedLibrary::load(const std::string& libPath, int major_ver, int minor_ver, std::string* pError)
 {
   if (!loadLibrary(libPath, &pLib_, pError))
     return false;
 
-  return loadSymbols(python3, pError);
+  return loadSymbols(major_ver, minor_ver, pError);
+}
+
+// Define "slow" fallback implementation for Py version <= 3.9
+int _PyIter_Check(PyObject* o) {
+  return PyObject_HasAttrString(o, "__next__");
+}
+
+int _PyObject_GetOptionalAttrString(PyObject* obj, const char* attr_name, PyObject** result) {
+  *result = PyObject_GetAttrString(obj, attr_name);
+  if (*result == NULL) {
+    if (PyErr_ExceptionMatches(PyExc_AttributeError)) {
+      PyErr_Clear();
+      return 0;
+    }
+    return -1;
+  }
+  return 1;
 }
 
 
-bool LibPython::loadSymbols(bool python3, std::string* pError)
+bool LibPython::loadSymbols(int python_major_ver, int python_minor_ver, std::string* pError)
 {
   bool is64bit = sizeof(size_t) >= 8;
 
-  LOAD_PYTHON_SYMBOL(Py_Initialize)
+  LOAD_PYTHON_SYMBOL(Py_InitializeEx)
+  LOAD_PYTHON_SYMBOL(Py_Finalize)
   LOAD_PYTHON_SYMBOL(Py_IsInitialized)
-  LOAD_PYTHON_SYMBOL(Py_GetVersion)
+  LOAD_PYTHON_SYMBOL(Py_GetVersion)          // Deprecated in 3.13
   LOAD_PYTHON_SYMBOL(Py_AddPendingCall)
+  LOAD_PYTHON_SYMBOL(Py_MakePendingCalls)
   LOAD_PYTHON_SYMBOL(PyErr_SetInterrupt)
   LOAD_PYTHON_SYMBOL(PyErr_CheckSignals)
-  LOAD_PYTHON_SYMBOL(PyExc_KeyboardInterrupt)
   LOAD_PYTHON_SYMBOL(Py_IncRef)
   LOAD_PYTHON_SYMBOL(Py_DecRef)
   LOAD_PYTHON_SYMBOL(PyObject_Size)
@@ -190,6 +222,13 @@ bool LibPython::loadSymbols(bool python3, std::string* pError)
   LOAD_PYTHON_SYMBOL(PyObject_SetAttr)
   LOAD_PYTHON_SYMBOL(PyObject_GetAttrString)
   LOAD_PYTHON_SYMBOL(PyObject_HasAttrString)
+  if (python_major_ver >= 3 && python_minor_ver >= 13) {
+    LOAD_PYTHON_SYMBOL(PyObject_HasAttrStringWithError)
+    LOAD_PYTHON_SYMBOL(PyObject_GetOptionalAttrString)
+  } else {
+    LOAD_PYTHON_SYMBOL_AS(PyObject_HasAttrString, PyObject_HasAttrStringWithError)
+    PyObject_GetOptionalAttrString = &_PyObject_GetOptionalAttrString;
+  }
   LOAD_PYTHON_SYMBOL(PyObject_SetAttrString)
   LOAD_PYTHON_SYMBOL(PyObject_GetItem)
   LOAD_PYTHON_SYMBOL(PyObject_SetItem)
@@ -204,14 +243,18 @@ bool LibPython::loadSymbols(bool python3, std::string* pError)
   LOAD_PYTHON_SYMBOL(PyList_GetItem)
   LOAD_PYTHON_SYMBOL(PyList_SetItem)
   LOAD_PYTHON_SYMBOL(PyErr_Clear)
+  LOAD_PYTHON_SYMBOL(PyErr_Print)
   LOAD_PYTHON_SYMBOL(PyErr_Fetch)
   LOAD_PYTHON_SYMBOL(PyErr_Restore)
   LOAD_PYTHON_SYMBOL(PyErr_Occurred)
   LOAD_PYTHON_SYMBOL(PyErr_SetNone)
+  LOAD_PYTHON_SYMBOL(PyErr_SetString)
+  LOAD_PYTHON_SYMBOL(PyErr_SetObject)
   LOAD_PYTHON_SYMBOL(PyErr_BadArgument)
   LOAD_PYTHON_SYMBOL(PyErr_NormalizeException)
   LOAD_PYTHON_SYMBOL(PyErr_ExceptionMatches)
   LOAD_PYTHON_SYMBOL(PyErr_GivenExceptionMatches)
+  LOAD_PYTHON_SYMBOL(PyErr_PrintEx)
   LOAD_PYTHON_SYMBOL(PyObject_Print)
   LOAD_PYTHON_SYMBOL(PyObject_Str)
   LOAD_PYTHON_SYMBOL(PyObject_Repr)
@@ -232,6 +275,7 @@ bool LibPython::loadSymbols(bool python3, std::string* pError)
   LOAD_PYTHON_SYMBOL(PyIter_Next)
   LOAD_PYTHON_SYMBOL(PyLong_AsLong)
   LOAD_PYTHON_SYMBOL(PyLong_FromLong)
+  LOAD_PYTHON_SYMBOL(PySlice_New)
   LOAD_PYTHON_SYMBOL(PyBool_FromLong)
   LOAD_PYTHON_SYMBOL(PyDict_New)
   LOAD_PYTHON_SYMBOL(PyDict_Contains)
@@ -251,6 +295,7 @@ bool LibPython::loadSymbols(bool python3, std::string* pError)
   LOAD_PYTHON_SYMBOL(PyModule_Type)
   LOAD_PYTHON_SYMBOL(PyType_Type)
   LOAD_PYTHON_SYMBOL(PyProperty_Type)
+  LOAD_PYTHON_SYMBOL(PyCapsule_IsValid)
   LOAD_PYTHON_SYMBOL(PyComplex_FromDoubles)
   LOAD_PYTHON_SYMBOL(PyComplex_RealAsDouble)
   LOAD_PYTHON_SYMBOL(PyComplex_ImagAsDouble)
@@ -259,6 +304,10 @@ bool LibPython::loadSymbols(bool python3, std::string* pError)
   LOAD_PYTHON_SYMBOL(PyObject_Call)
   LOAD_PYTHON_SYMBOL(PyObject_CallFunctionObjArgs)
   LOAD_PYTHON_SYMBOL(PyType_IsSubtype)
+  LOAD_PYTHON_SYMBOL(PyType_GetFlags)
+  LOAD_PYTHON_SYMBOL(PyMapping_Items)
+  LOAD_PYTHON_SYMBOL(PyOS_getsig)
+  LOAD_PYTHON_SYMBOL(PyOS_setsig)
   LOAD_PYTHON_SYMBOL(PySys_WriteStderr)
   LOAD_PYTHON_SYMBOL(PySys_GetObject)
   LOAD_PYTHON_SYMBOL(PyEval_SetProfile)
@@ -266,23 +315,28 @@ bool LibPython::loadSymbols(bool python3, std::string* pError)
   LOAD_PYTHON_SYMBOL(PyGILState_Ensure)
   LOAD_PYTHON_SYMBOL(PyGILState_Release)
   LOAD_PYTHON_SYMBOL(PyThreadState_Next)
+  LOAD_PYTHON_SYMBOL(PyEval_SaveThread)
+  LOAD_PYTHON_SYMBOL(PyEval_RestoreThread)
   LOAD_PYTHON_SYMBOL(PyObject_CallMethod)
   LOAD_PYTHON_SYMBOL(PySequence_GetItem)
   LOAD_PYTHON_SYMBOL(PyObject_IsTrue)
   LOAD_PYTHON_SYMBOL(PyCapsule_Import)
+  LOAD_PYTHON_SYMBOL(PyUnicode_AsUTF8)
+  LOAD_PYTHON_SYMBOL(PyUnicode_CompareWithASCIIString)
 
   // PyUnicode_AsEncodedString may have several different names depending on the Python
   // version and the UCS build type
   std::vector<std::string> names;
+  names.reserve(3);
   names.push_back("PyUnicode_AsEncodedString");
   names.push_back("PyUnicodeUCS2_AsEncodedString");
   names.push_back("PyUnicodeUCS4_AsEncodedString");
   if (!loadSymbol(pLib_, names, (void**)&PyUnicode_AsEncodedString, pError) )
     return false;
 
-  if (python3) {
+  if (python_major_ver >= 3) {
     LOAD_PYTHON_SYMBOL(PyException_SetTraceback)
-    LOAD_PYTHON_SYMBOL(Py_GetProgramFullPath)
+    LOAD_PYTHON_SYMBOL(Py_GetProgramFullPath)   // Deprecated in 3.13
 
     // Debug versions of Python will provide PyModule_Create2TraceRefs,
     // while release versions will provide PyModule_Create
@@ -312,7 +366,7 @@ bool LibPython::loadSymbols(bool python3, std::string* pError)
     } else {
       LOAD_PYTHON_SYMBOL(Py_InitModule4)
     }
-    LOAD_PYTHON_SYMBOL_AS(Py_GetProgramFullPath, Py_GetProgramFullPath_v2)
+    LOAD_PYTHON_SYMBOL_AS(Py_GetProgramFullPath, Py_GetProgramFullPath_v2)  // Deprecated in 3.13
     LOAD_PYTHON_SYMBOL(PyString_AsStringAndSize)
     LOAD_PYTHON_SYMBOL(PyString_FromStringAndSize)
     LOAD_PYTHON_SYMBOL(PyString_FromString)
@@ -329,6 +383,12 @@ bool LibPython::loadSymbols(bool python3, std::string* pError)
   LOAD_PYTHON_SYMBOL(PyCapsule_SetContext)
   LOAD_PYTHON_SYMBOL(PyCapsule_GetContext)
   LOAD_PYTHON_SYMBOL(Py_BuildValue)
+
+  // LOAD_PYTHON_SYMBOL(PyIter_Check) // only available beginning in 3.10
+  // Try to load the symbol, and if it fails, set it to the internal function
+  if (!loadSymbol(pLib_, "PyIter_Check", (void**)&PyIter_Check, NULL)) {
+    PyIter_Check = &_PyIter_Check;
+  }
 
   return true;
 }
@@ -370,10 +430,13 @@ bool import_numpy_api(bool python3, std::string* pError) {
   }
 
   // check C API version
-  if (NPY_VERSION != PyArray_GetNDArrayCVersion()) {
+  // we aim to compile a single binary compatible with both numpy 2.x and 1.x
+  auto runtime_npy_version = PyArray_GetNDArrayCVersion();
+  if (NPY_VERSION_2 != runtime_npy_version &&
+      NPY_VERSION_1 != runtime_npy_version) {
     std::ostringstream ostr;
     ostr << "incompatible NumPy binary version " << (int) PyArray_GetNDArrayCVersion() << " "
-    "(expecting version " << (int) NPY_VERSION << ")";
+    "(expecting version " << (int) NPY_VERSION_2 << " or " << (int) NPY_VERSION_1 << ")";
     *pError = ostr.str();
     return false;
   }
@@ -388,6 +451,41 @@ bool import_numpy_api(bool python3, std::string* pError) {
   }
 
   return true;
+}
+
+
+int flush_std_buffers() {
+  int status = 0;
+  PyObject* tmp = NULL;
+  PyObject *error_type, *error_value, *error_traceback;
+  PyErr_Fetch(&error_type, &error_value, &error_traceback);
+
+  PyObject* sys_stdout(PySys_GetObject("stdout"));  // returns borrowed reference
+  if (sys_stdout == NULL)
+    status = -1;
+  else
+    tmp = PyObject_CallMethod(sys_stdout, "flush", NULL);
+
+  if (tmp == NULL)
+    status = -1;
+  else {
+    Py_DecRef(tmp);
+    tmp = NULL;
+  }
+
+  PyObject* sys_stderr(PySys_GetObject("stderr"));  // returns borrowed reference
+  if (sys_stderr == NULL)
+    status = -1;
+  else
+    tmp = PyObject_CallMethod(sys_stderr, "flush", NULL);
+
+  if (tmp == NULL)
+    status = -1;
+  else
+    Py_DecRef(tmp);
+
+  PyErr_Restore(error_type, error_value, error_traceback);
+  return status;
 }
 
 

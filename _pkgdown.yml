@@ -68,6 +68,7 @@ reference:
       - py_to_r
       - r_to_py
       - as.character.python.builtin.bytes
+      - as.character.python.builtin.str
       - py_is_null_xptr
       - py_id
       - py_len
@@ -83,14 +84,17 @@ reference:
       - py_none
       - PyClass
       - py_function_custom_scaffold
+      - nameOfClass.python.builtin.type
+      - ==.python.builtin.object
 
   - title: "Package Installation"
     contents:
       - py_install
       - py_list_packages
-      - configure_environment
       - virtualenv-tools
+      - configure_environment
       - conda-tools
+      - conda_run2
 
   - title: "Miniconda"
     contents:

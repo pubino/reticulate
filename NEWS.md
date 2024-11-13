@@ -1,10 +1,557 @@
 # reticulate (development version)
 
+- The S3 classes for some (rarely encountered) Python objects have changed.
+  Only Python objects with non-standard `__module__` values are affected.
+  If a Python object’s parent class’s `__module__` attribute does not resolve to a string,
+  reticulate:
+    - Attempts to resolve it from the class's class, if it's a metaclass.
+    - If no string can be resolved, reticulate no longer implicitly prepends
+      'python.builtin.' as the class prefix, instead it uses just the `__name__`.
+  (See #1686 for more context)
+
+- Added support for Python 3.13. Note that Python 3.13 removed support
+  for `classmethod` descriptors, which may affect the S3 class of
+  some Python objects that use metaclass properties to resolve a class’s
+  `__module__` or `__name__` attribute. (#1686, #1698)
+
+- `py_is_null_xptr()` and `[[` now load delayed modules (#1688).
+
+- Fixed error when attempting to use a python venv created with `uv` (#1678)
+
+- Fixed error where `py_discover_config()` attempted to detect
+  Windows App Store Python installations, which are now excluded
+  from discovery by both `py_discover_config()` and `virtualenv_starter()`
+  (#1656, #1673).
+
+- Fixed error when converting an empty NumPy char array to R (#1662).
+
+- Fixed error when using reticulate with radian (#1668, #1670).
+
+- Fixed segfault encountered when running Python finalizer (#1663, #1664)
+
+- Fixed segfault encountered in RStudio when rapidly switching
+  between R and Python chunks in a Quarto document (#1665).
+
+- Improved behavior when the conda binary used to create an environment
+  could not be resolved (contributed by @tl-hbk, #1654, #1659)
+
+# reticulate 1.39.0
+
+- Python background threads can now run in parallel with the R session (#1641).
+
+- `py_main_thread_func()` is deprecated; every R function can now safely be
+  called from background Python threads (#1648).
+
+- Calls from Python threads into R now notify the main thread using R's native
+  event loop, ensuring that these calls are handled even when the main thread
+  is engaged in non-Python tasks (#1648).
+
+- The knitr engine now avoids overwriting Altair's default chart dimensions with
+  the values of `ut.width.px` and `ut.height.px`. Use `altair.fig.height`,
+  `altair.fig.width`, or Altair's `width` and `height` parameters to adjust
+  chart dimensions (contributed by @joelostblom, #1646).
+
+- New `as.character()` method for `python.builtin.str` with support for handling
+  embedded NULs in strings (#1653).
+
+- New `as.raw()` method for `python.builtin.bytes` (#1649, #1652).
+
+- `as.character()` method for `python.builtin.bytes` gains a `nul` argument,
+  allowing for convenient handling of embedded NULs in the string (#1652).
+
+- Reticulate now uses the `RETICULATE_VIRTUALENV_ROOT` environment variable when
+  determining where to resolve virtual environments (#1657).
+
+- `conda_run2()` is now exported (contributed by @dramanica, #1637).
+
+- The Python session is now finalized when the R session exits (#1648).
+
+- Internal updates for NumPy 2.1 (#1651).
+
+- Fixed error when importing a module named `config` (#1628).
+
+- Fixes for CRAN check failures on macOS-oldrel (#1645).
+
+- Fixed an error where opening a Python subprocess in Positron on Windows
+  resulted in "OSError: [WinError 6] The handle is invalid."
+  (#1658, posit-dev/positron#4457).
+
+# reticulate 1.38.0
+
+- Python Exceptions converted to R conditions are now R lists instead
+  of R environments, for compatability with {rlang} and {purrr}.
+  (tidyverse/purrr#1104, r-lib/rlang#1664, #1617)
+
+- Internal updates for NumPy 2.0 (#1621)
+
+- Added support for converting NumPy StringDType arrays to R character arrays. (#1623)
+
+- Internal updates for compliance with R's upcoming formalized C API. (#1625)
+
+- Fixed an issue where attempting to convert a NumPy array with a non-simple
+  dtype to R would signal an error. (#1613, fixed in #1614).
+
+# reticulate 1.37.0
+
+- Interrupting Python no longer leads to segfaults.
+  (#1601, fixed in #1602)
+
+- Print method for Python callables now includes the callable’s signature.
+  (#1605, #1607)
+
+- Reticulate now installs successfully on Windows ARM64.
+  (#1609, contributed by @andrjohns)
+
+- `virtualenv_starter()` no longer warns when encountering broken symlinks.
+  (#1598)
+
+- Fixed an issue where configuration for reticulate `conda_*` functions to use
+  the executable `mamba` instead of `conda` was ignored.
+  (#1608, contributed by @AlexandreGuinaudeau)
+
+# reticulate 1.36.1
+
+- Fix issue where `py_to_r()` method for Pandas DataFrames would error
+  if `py_to_r()` S3 methods were defined for Pandas subtypes,
+  (as done by {anndata}) (#1591).
+
+- "Python Dependencies" vignette edits (@salim-b, #1586)
+
+- Added an option for extra command-line arguments in
+  `conda_create()` and `conda_install()` (#1585).
+
+- Fixed issue where `conda_install()` would ignore user-specified
+  channels during Python installation (#1594).
+
+# reticulate 1.36.0
+
+- Internal refactoring and optimizations now give a faster experience,
+  especially for workflows that frequently access Python objects from R.
+  For example, simple attribute access like `sys$path` is ~2.5x times faster, and
+  a sample workload of `py_to_r(np_array(1:3) + np_array(1:3))` benchmarks
+  ~3.5x faster when compared to the previous CRAN release.
+
+- Fixed issue where callable python objects created with `convert = FALSE` would not be
+  wrapped in an R function (#1522).
+
+- Fixed issue where `py_to_r()` S3 methods would not be called on arguments supplied to
+  R functions being called from Python (#1522).
+
+- `install_python()` will now build optimized versions of Python on macOS and Linux (#1567)
+
+- Default Python version installed by `install_python()` is now 3.10 (was 3.9) (#1574).
+
+- Output of `reticulate::py_last_error()` now includes a hint, showing how to access
+  the full R call stack (#1572).
+
+- Fixed an issue where nested `py_capture_output()` calls result in a lost reference
+  to the original `sys.stdout` and `sys.stderr`, resulting in no further visible output
+  from Python, and eventually, a segfault. (#1564)
+
+- Fixed issues reported by rchk, as requested by CRAN (#1581).
+
+- `py_to_r(x)` now returns `x` unmodified if `x` is not a Python object,
+  instead of signaling an error.
+
+- New `as.data.frame()` method exported for Python Polars DataFrames (#1568)
+
+- Fixed an issue where printing a delayed module (`import("foo", delay_load = TRUE)`)
+  would output `<pointer: 0x0>`.
+
+- `py_validate_xptr()` will now attempt to resolve delayed modules before
+  signaling an error (#1561).
+
+- R packages can now express multiple preferred Python environments to
+  search for and use if they exist, by supplying a character vector to `import()`:
+  `import("foo", delay_load = list(environment = c("r-foo", "r-bar")))` (#1559)
+
+- Reticulate will no longer warn about ignored `use_python(,required = FALSE)` calls (#1562).
+
+- `reticulate` now prefers using the agg matplotlib backend when the R session
+  is non-interactive. The backend can also be overridden via the `MPLBACKEND` or
+  `RETICULATE_MPLBACKEND` environment variables when necessary (#1556).
+
+- `attr(x, "tzone")` attributes are (better) preserved when converting POSIXt to Python.
+  POSIXt types with a non-empty `tzone` attr convert to a `datetime.datetime`,
+  otherwise they convert to NumPy `datetime64[ns]` arrays.
+
+- Fixed an issue where calling `py_set_item()` on a subclassed dict would
+  not invoke a custom `__setitem__` method.
+
+- `py_del_attr(x, name)` now returns `x` invisibly
+
+- `source_python()` no longer exports the `r` symbol to the R global environment.
+  (the "R Interface Object" that is used by Python code get a reference to the
+  R `globalenv()`)
+
+- Fixed hang encountered (sometimes) when attempting to call `iterate()`
+  on an exhausted `py_iterator()` object multiple times (#1539).
+
+- `iterate(simplify=TRUE)` rewritten in C for speed improvements (#1539).
+
+- Update for Pandas 2.2 deprecation of `Index.format()` (#1537, #1538).
+
+- Updates for CRAN R-devel (R 4.4) (#1554).
+
+- Fixed an issue where `py_discover_config()` would discover `python` (v2) on the PATH
+  in preference of `python3` on the PATH. (#1547)
+
+- Fixed an issue where reticulate would error when using conda environments created
+  with the (new) `conda env create` command. (#1535, #1543)
+
+- Fixed an issue where reticulate would error when using a conda environment
+  where the original conda binary that was used to create the environment
+  is no longer available (#1555)
+
+- Fixed an issue where a user would be unable to accept the prompt to create
+  the default "r-reticulate" venv (#1557).
+
+- `is_py_object()` is now exported (#1573).
+
+# reticulate 1.35.0
+
+- Subclassed Python list and dict objects are no longer automatically converted
+  to R vectors. Additionally, the S3 R `class` attribute for Python objects is
+  now constructed using the Python `type(object)` directly, rather than from the
+  `object.__class__` attribute. See #1531 for details and context.
+
+- R external pointers (EXTPTRSXP objects) now round-trip through
+  `py_to_r(r_to_py(x))` successfully.
+  (reported in #1511, fixed in #1519, contributed by @llaniewski).
+
+- Fixed issue where `virtualenv_create()` would error on Ubuntu 22.04 when
+  using the system python as a base. (#1495, fixed in #1496).
+
+- Fixed issue where `csc_matrix` objects with unsorted indices could not be
+  converted to a dgCMatrix. (related to #727, fixed in #1524, contributed by @rcannood).
+
+- Added support for partially unexpanded variables like `$USER` in
+  `XDG_DATA_HOME` and similar (#1513, #1514)
+
+## Knitr Python Engine Changes:
+
+- The knitr python engine now formats captured python exceptions to include the
+  exception type and any exception notes when chunk options
+  `error = TRUE` is set (reported in #1520, fixed in #1527).
+
+- Fixed an issue where the knitr python engine would fail to include
+  figures from python chunks if a custom `root.dir` chunk option was set.
+  (reported in #1526, fixed in #1529)
+
+- knitr engine gains the ability to save chunk figures in multiple files/formats
+  (Contributed by @Rumengol in #1507)
+
+- Fixed an issue where matplotlib figures generated in the initial chunk
+  where matplotlib was first imported would be the wrong size
+  (reported in #1523, fixed in #1530)
+
+- Fixed an issue where the knitr engine would not correctly display altair
+  compound charts if more than one were present in a document (#1500, #1532).
+
+# reticulate 1.34.0
+
+# reticulate 1.33.0
+
+- Fixed issue where `asyncio`, (and modules that use `asyncio`), would error on
+  Windows when running under RStudio (#1478, #1479).
+
+- Added compatability with Python 3.12.
+
+- `condaenv_exists()` is now exported.
+
+# reticulate 1.32.0
+
+- reticulate now supports casting R data.frames to Pandas data.frames using nullable
+  data types, allowing users to preserve NA's from R atomic vectors. This feature is
+  opt-in and can be enabled by setting the R option `reticulate.pandas_use_nullable_dtypes`
+  to `TRUE`. (#1439)
+
+- reticulate now exports a `chooseOpsMethod()` method, allowing for Ops dispatch
+  to more specialized Ops methods defined for Python objects.
+
+- `py_discover_config()` will now warn instead of error upon encountering a
+  broken Python installation. (#1441, #1459)
+
+- Fixed issue where Python would raise exception "OSError: [WinError 6] The handle is invalid"
+  when opening a subprocess while running in Rstudio on Windows. (#1448, #518)
+
+- Fixed issue where the multiprocessing Python module would crash or hang when spawning a
+  `Process()` on Windows. (#1430, #1346, fixed in #1461)
+
+- Fixed issue where `virtualenv_create()` would fail to discover a 'virtualenv' module
+  in the system Python installation on Ubuntu. Reticulate will no longer discover
+  and attempt to use the `venv` module stub present on Ubuntu systems
+  where the `python3-venv` apt package has not been installed.
+  (mlverse/pysparklyr#11, #1437, #1455)
+
+- Fixed issue where the user was prompted to create an 'r-reticulate' venv
+  in the RStudio IDE before reticulate was requested to initialize Python. (#1450, #1456)
+
+- Improved error message when reticulate attempts to initialize a virtual environment
+  after the Python installation it was created from is no longer available. (#1149, #1457)
+
+- Improved error message on Fedora when attempting to create a virtual environment
+  from the system python before running `dnf install python3-pip`.
+
+- Fixed issue where `install_python()` on macOS in the RStudio IDE would fail to discover
+  and use brew for Python build dependencies.
+
+- Fixed error with `virtualenv_create(python = "/usr/bin/python")` on centos7. (#1467)
+
+# reticulate 1.31
+
+## Python Installation Management
+
+- reticulate will no longer prompt users to install miniconda. Instead,
+  reticulate will now prompt users to create a default `r-reticulate` venv.
+
+- The search that reticulate conducts to select which Python installation to load
+  has changed. See the updated Python "Order of Discover" in the "versions" vignette.
+  `vignette("versions", package = "reticulate")`.
+
+- Updated recommendations in the "python_dependencies" vignette for how R packages
+  can approach Python dependency management.
+  `vignette("python_dependencies", package = "reticulate")`
+
+- New function `virtualenv_starter()`, which can be used to find a suitable
+  python binary for creating a virtual environment. This is now the default
+  method for finding the python binary when calling
+  `virtualenv_create(version = <version>)`.
+
+- `virtualenv_create()` and `virtualenv_install()` gain a `requirements` argument,
+  accepting a filepath to a python requirements file.
+
+- `virtualenv_create()` gains a `force` argument.
+
+- `virtualenv_install()` gains a `python_version` argument, allowing users to customize
+  which python version is used when bootstrapping a new virtual environment.
+
+- Fixed an issue where the list of available python versions used by
+  `install_python()` would be out-of-date.
+
+- `install_python()` now gives a better error message if git is not installed.
+
+- `install_python()` on macOS will now will use brew, if it's available, to install
+   build dependencies, substantially speeding up python build times.
+
+- New function `conda_search()`, contributed by @mkoohafkan in PR #1364.
+
+## Language
+
+- New `[` and `[<-` methods that invoke Python `__getitem__`, `__setitem__` and
+  `__delitem__`. The R generics `[` and `[<-` now accept python-style slice
+  syntax like `x[1:2:3]`. See examples in `?py_get_item`.
+
+- `py_iterator()` gains a `prefetch` argument, primarily to avoid deadlocks
+  where the main thread is blocked, waiting for the iterator, which is waiting
+  to run on the main thread, as encountered in TensorFlow/Keras. (#1405).
+
+- String columns from Pandas data frames containing `None`, `pd.NA` or `np.nan`
+  are now simplified into character vectors and missing values replaced by `NA`
+  (#1428).
+
+- Converting from Pandas data frames containing columns with Pandas nullable
+  data types are now correctly converted into R data.frames preserving the
+  missing values (#1427).
+
+## Knitr
+
+- The knitr engine gains a `jupyter_compat` option, enabling
+  reticulate to better match the behavior of Jupyter. When this chunk
+  option is set to `TRUE`, only the return value from the last
+  expression in a chunk is auto-printed.
+  (#1391, #1394, contributed by @matthew-brett)
+
+- The knitr engine now more reliably detects and displays matplotlib
+  pending plots, without the need for a matplotlib artist object to be
+  returned as a top-level expression. E.g., the knitr engine will now
+  display plots when the matplotlib api returns something other than
+  an artist object, (`plt.bar()`), or the matplotlib return value is
+  not auto-printed due to being assigned, (`x = plt.plot()`), or
+  suppressed with a `;`, (`plt.plot();`). (#1391, #1401, contributed
+  by @matthew-brett)
+
+- Fixed an issue where knitr engine would not respect chunk options
+  `fig.width` / `fig.height` when rendering matplotlib plots. (#1398)
+
+- Fixed an issue where the reticulate knitr engine would not capture output
+  printed from python. (PR #1412, fixing #1378, #331)
+
+## Miscellanous
+
+- Reticulate now periodically flushes python `stdout` and `stderr` buffers even
+  while the main thread is blocked executing Python code. Streaming output
+  from a long-running Python function call will now appear in the R console
+  while the Python function is still executing. (Previously, output might not
+  appear until the Python function had finished and control of the main thread
+  had returned to R).
+
+- Updated sparse matrix conversion routines for compatibility with
+  scipy 1.11.0.
+
+- Fixed an issue where a py capsule finalizer could access the R API from
+  a background thread. (#1406)
+
+- Fixed issue where R would segfault (crash) in long-lived R sessions where both
+  rpy2 and reticulate were in use (#1236).
+
+- Fixed an issue where exceptions from reticulate would not be formatted properly
+  when running tests under testthat (r-lib/rlang#1637, #1413).
+
+- Fixed an issue where `py_get_attr(silent = TRUE)` would not return an R `NULL`,
+  if the attribute was missing, as documented. (#1413)
+
+- Fixed an issue where `py_get_attr(silent = TRUE)` would leave a python global
+  exception set if the attribute was missing, resulting in fatal errors when
+  running python under debug mode. (#1396)
+
+# reticulate 1.30
+
+- Fix compilation error on R 3.5. Bump minimum R version dependency to 3.5.
+
+# reticulate 1.29
+
+### Exceptions and Errors:
+
+- R error information (call, message, other attributes) is now
+  preserved as an R error condition traverses the R <-> Python boundary.
+
+- Python Exceptions now inherit from `error` and `condition`, and can be
+  passed directly to `base::stop()` to signal an error in R and raise an
+  exception in Python.
+
+- Raised Python Exceptions are now used directly to signal an R error.
+  For example, in the following code, `e` is now an object that
+  inherits from `python.builtin.Exception` as well as `error` and `condition`:
+    ```r
+    e <- tryCatch(py_func_that_raises_exception(),
+                  error = function(e) e)
+    ```
+  Use `base::conditionCall()` and `base::conditionMessage()` to access
+  the original R call and error message.
+
+- `py_last_error()` return object contains `r_call`, `r_trace` and/or
+  `r_class` if the Python Exception was raised by an R function called
+  from Python.
+
+- The hint to run `reticulate::py_last_error()` after an exception
+  is now clickable in the RStudio IDE.
+
+- Filepaths to Python files in the print output from `py_last_error()` are
+  now clickable links in the RStudio IDE.
+
+- Python exceptions encountered in `repl_python()` are now printed with the
+  full Python traceback by default. In the RStudio IDE, filepaths in the tracebacks
+  are rendered as clickable links. (#1240)
+
+### Language:
+
+- Converted Python callables gain support for dynamic dots from the rlang package.
+  New features:
+    - splicing (unpacking) arguments: `fn(!!!kwargs)`
+    - dynamic names: `nm <- "key"; fn("{nm}" := value)`
+    - trailing commas ignored (matching Python syntax): `fn(a, )` identical to `fn(a)`
+
+- New Ops group generics for Python objects:
+  `+`, `-`, `*`, `/`, `^`, `%%`, `%/%`, `&`, `|`, `!`, `%*%`.
+  Methods for all the Ops group generics are now defined for Python objects. (#1187, #1363)
+  E.g., this now works:
+  ```r
+  np <- reticulate::import("numpy", convert = FALSE)
+  x <- np$array(1:5)
+  y <- np$array(6:10)
+  x + y
+  ```
+
+- Fixed two issues with R comparison operator methods
+  (`==`, `!=`, `<`, `<=`, `>=`, `>`):
+   - The operators no longer error on Python objects that define "rich comparison"
+     Python methods that don't return a single bool. (e.g., numpy arrays).
+   - The operators now respect the 'convert' value of the supplied Python objects.
+     Note, this may be a breaking change as, e.g, `==`, may now no long return
+     an R scalar logical if one of the Python object being compared was created
+     with `convert = FALSE`. Wrap the result of the comparison with `py_bool()` to
+     restore the previous behavior.
+  (#1187, #1363)
+
+- R functions wrapping Python callables now have formals matching
+  those of the Python callable signature, enabling better
+  autocompletion in more contexts (#1361).
+
+- new `nameOfClass()` S3 method for Python types, enabling usage:
+  `base::inherits(x, <python-type-object>)` (requires R >= 4.3.0)
+
+- `py_run_file()` and `source_python()` now prepend the script directory to
+  the Python module search path, `sys.path`, while the requested script is executing.
+  This allows the Python scripts to resolve imports of modules defined in the
+  script directory, matching the behavior of `python <script>` at the command line.
+  (#1347)
+
+### knitr:
+
+- The knitr engine now suppresses warnings from Python code if
+  `warning=FALSE` is set in the chunk options. (quarto-dev/quarto#125, #1358)
+
+- Fixed issue where reticulate's knitr engine would attach comments in a
+  code chunk to the wrong code chunk (requires Python>=3.8) (#1223).
+
+- The knitr Python engine now respects the `strip.white` option (#1273).
+
+- Fixed issue where the knitr engine would show an additional plot from a chunk
+  if the user called `matplotlib.pyplot.show()` (#1380, #1383)
+
+### Misc:
+
+- `py_to_r()` now succeeds when converting subtypes of the built-in
+  types (e.g. `list`, `dict`, `str`). (#1352, #1348, #1226, #1354, #1366)
+
+- New `pillar::type_sum()` method now exported for Python objects. That ensures
+  the full object class name is printing in R tracebacks and tibbles
+  containing Python objects.
+
+- `py_load_object()` gains a `convert` argument. If `convert = FALSE`,
+  the returned Python object will not be converted to an R object.
+
+- Fixed error `r_to_py()` with Pandas>=2.0 and R data.frames with a
+  factor column containing levels with `NA`.
+
+- `r_to_py()` now succeeds for many additional types of R objects.
+  Objects that reticulate doesn't know how to convert are presented to
+  the Python runtime as a pycapsule (an opaque pointer to the underlying
+  R object). Previously this would error.
+  This allows for R code to pass R objects that cannot be safely
+  converted to Python through the Python runtime to other R code.
+  (e.g, to an R function called by Python code). (#1304)
+
+- reticulate gains the ability to bind to micromamba Python installations
+  (#1378, #1176, #1382, #1379, thanks to Zia Khan, @zia1138)
+
+- Default Python version used by `install_miniconda()` and friends
+  is now 3.9 (was 3.8).
+
+
+# reticulate 1.28
+
+- Fixed issue where `source_python()` (and likely many other entrypoints)
+  would error if reticulate was built with Rcpp 1.0.10. Exception and
+  error handling has been updated to accommodate usage of `R_ProtectUnwind()`.
+  (#1328, #1329).
+
+- Fixed issue where reticulate failed to discover Python 3.11 on Windows. (#1325)
+
+- Fixed issue where reticulate would error by attempting to bind to
+  a cygwin/msys2 installation of Python on Windows (#1325).
+
+# reticulate 1.27
+
 - `py_run_file()` now ensures the `__file__` dunder is visible to the
   executing python code. (#1283, #1284)
-  
-- Fixed an issue where `install_miniconda()` and `conda_install()` would error
-  on Windows (#1286, #1287, conda/conda#11795)
+
+- Fixed errors with `install_miniconda()` and `conda_install()`,
+  on Windows (#1286, #1287, conda/conda#11795, #1312, #1297),
+  and on Linux and macOS (#1306, conda/conda#10431)
+
+- Fixed error when activating a conda env from a UNC drive on Windows (#1303).
 
 # reticulate 1.26
 

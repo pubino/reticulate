@@ -13,6 +13,8 @@
 \alias{conda_version}
 \alias{conda_update}
 \alias{conda_python}
+\alias{conda_search}
+\alias{condaenv_exists}
 \title{Conda Tools}
 \usage{
 conda_list(conda = "auto")
@@ -25,7 +27,8 @@ conda_create(
   channel = character(),
   environment = NULL,
   conda = "auto",
-  python_version = miniconda_python_version()
+  python_version = miniconda_python_version(),
+  additional_create_args = character()
 )
 
 conda_clone(envname, ..., clone = "base", conda = "auto")
@@ -50,6 +53,8 @@ conda_install(
   pip_ignore_installed = FALSE,
   conda = "auto",
   python_version = NULL,
+  additional_create_args = character(),
+  additional_install_args = character(),
   ...
 )
 
@@ -62,6 +67,16 @@ conda_version(conda = "auto")
 conda_update(conda = "auto")
 
 conda_python(envname = NULL, conda = "auto", all = FALSE)
+
+conda_search(
+  matchspec,
+  forge = TRUE,
+  channel = character(),
+  conda = "auto",
+  ...
+)
+
+condaenv_exists(envname = NULL, conda = "auto")
 }
 \arguments{
 \item{conda}{The path to a \code{conda} executable. Use \code{"auto"} to allow
@@ -72,7 +87,8 @@ See \strong{Finding Conda} and \code{\link[=conda_binary]{conda_binary()}} for m
 
 \item{packages}{A character vector, indicating package names which should be
 installed or removed. Use  \verb{<package>==<version>} to request the installation
-of a specific version of a package.}
+of a specific version of a package. A \code{NULL} value for \code{\link[=conda_remove]{conda_remove()}}
+will be interpretted to \code{"--all"}, removing the entire environment.}
 
 \item{...}{Optional arguments, reserved for future expansion.}
 
@@ -92,6 +108,9 @@ and other arguments will be ignored.}
 \item{python_version}{The version of Python to be installed. Set this if
 you'd like to change the version of Python associated with a particular
 conda environment.}
+
+\item{additional_create_args}{An optional character vector of additional
+arguments to use in the call to \verb{conda create}.}
 
 \item{clone}{The name of the conda environment to be cloned.}
 
@@ -113,7 +132,12 @@ for situations where you don't want a pip install to attempt an overwrite of
 a conda binary package (e.g. SciPy on Windows which is very difficult to
 install via pip due to compilation requirements).}
 
+\item{additional_install_args}{An optional character vector of additional
+arguments to use in the call to \verb{conda install}.}
+
 \item{all}{Boolean; report all instances of Python found?}
+
+\item{matchspec}{A conda MatchSpec query string.}
 }
 \value{
 \code{conda_list()} returns an \R \code{data.frame}, with \code{name} giving the name of
@@ -128,6 +152,12 @@ conda environment.
 
 \code{conda_export()} returns the path to the exported environment definition,
 invisibly.
+
+\code{conda_search()} returns an \R \code{data.frame} describing packages that
+matched against \code{matchspec}. The data frame will usually include
+fields \code{name} giving the package name, \code{version} giving the package
+version, \code{build} giving the package build, and \code{channel} giving the
+channel the package is hosted on.
 }
 \description{
 Tools for managing Python \code{conda} environments.
@@ -150,10 +180,13 @@ The following locations are searched, in order:
 To force \code{reticulate} to use a particular \code{conda} binary, we recommend
 setting:
 
-\if{html}{\out{<div class="sourceCode">}}\preformatted{options(reticulate.conda_binary = "/path/to/conda")
+\if{html}{\out{<div class="sourceCode r">}}\preformatted{options(reticulate.conda_binary = "/path/to/conda")
 }\if{html}{\out{</div>}}
 
 This can be useful if your conda installation lives in a location that
 \code{reticulate} is unable to automatically discover.
 }
 
+\seealso{
+\code{\link[=conda_run2]{conda_run2()}}
+}

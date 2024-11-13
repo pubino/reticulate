@@ -20,22 +20,32 @@ pip_version <- function(python) {
 }
 
 pip_install <- function(python,
-                        packages,
+                        packages = NULL,
                         pip_options = character(),
                         ignore_installed = FALSE,
                         conda = "auto",
-                        envname = NULL)
+                        envname = NULL,
+                        requirements = NULL,
+                        no_user = TRUE)
 {
   # construct command line arguments
-  args <- c("-m", "pip", "install", "--upgrade", "--no-user")
+  args <- c("-m", "pip", "install", "--upgrade",
+            if (no_user) "--no-user")
   if (ignore_installed)
     args <- c(args, "--ignore-installed")
   args <- c(args, pip_options)
 
+
+  if (!is.null(packages)) {
   # quote in case of version constraints like 'Pillow<8.3'
   # but don't double quote if already quoted
-  packages <- shQuote(gsub("[\"']", "", packages))
-  args <- c(args, packages)
+    packages <- maybe_shQuote(gsub("[\"']", "", packages))
+    args <- c(args, packages)
+  }
+
+  if (!is.null(requirements)) {
+    args <- c(args, "-r", maybe_shQuote(requirements))
+  }
 
   # figure out if we should go though conda_run()
   if (conda == "auto") {

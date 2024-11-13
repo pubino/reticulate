@@ -22,6 +22,57 @@
 #' @param options
 #'   Chunk options, as provided by `knitr` during chunk execution.
 #'
+#' @section Supported `knitr` chunk options:
+#'
+#' For most options, reticulate's python engine behaves the same as the default
+#' R engine included in knitr, but they might not support all the same features.
+#' Options in *italic* are equivalent to knitr, but with modified behavior.
+#'
+#' - *`eval`* (`TRUE`, logical): If `TRUE`, all expressions in the chunk are evaluated. If `FALSE`,
+#'   no expression is evaluated. Unlike knitr's R engine, it doesn't support numeric
+#'   values indicating the expressions to evaluate.
+#' - *`echo`* (`TRUE`, logical): Whether to display the source code in the output document. Unlike
+#'   knitr's R engine, it doesn't support numeric values indicating the expressions
+#'   to display.
+#' - `results` (`'markup'`, character): Controls how to display the text results. Note that this option only
+#'   applies to normal text output (not warnings, messages, or errors). The behavior
+#'   should be identical to knitr's R engine.
+#' - `collapse` (`FALSE`, logical): Whether to, if possible, collapse all the source and output blocks
+#'   from one code chunk into a single block (by default, they are written to separate blocks).
+#'   This option only applies to Markdown documents.
+#' - `error` (`TRUE`, logical): Whether to preserve errors. If `FALSE` evaluation stops
+#'   on errors. (Note that RMarkdown sets it to `FALSE`).
+#' - *`warning`* (`TRUE`, logical): Whether to preserve warnings in the output. If FALSE, all warnings
+#'   will be suppressed. Doesn't support indices.
+#' - `include` (`TRUE`, logical): Whether to include the chunk output in the output document.
+#'   If `FALSE`, nothing will be written into the output document, but the code is still
+#'   evaluated and plot files are generated if there are any plots in the chunk, so you
+#'   can manually insert figures later.
+#' - `dev`: The graphical device to generate plot files. See knitr documentation for
+#'    additional information.
+#' - `base.dir` (`NULL`; character): An absolute directory under which the plots
+#'    are generated.
+#' - `strip.white` (TRUE; logical): Whether to remove blank lines in the beginning
+#'   or end of a source code block in the output.
+#' - `dpi` (72; numeric): The DPI (dots per inch) for bitmap devices (dpi * inches = pixels).
+#' - `fig.width`, `fig.height` (both are 7; numeric): Width and height of the plot
+#'   (in inches), to be used in the graphics device.
+#' - `label`: The chunk label for each chunk is assumed to be unique within the
+#'   document. This is especially important for cache and plot filenames, because
+#'   these filenames are based on chunk labels. Chunks without labels will be
+#'   assigned labels like unnamed-chunk-i, where i is an incremental number.
+#'
+#' ### Python engine only options
+#'
+#' - **`jupyter_compat`** (FALSE, logical): If `TRUE` then, like in Jupyter notebooks,
+#'   only the last expression in the chunk is printed to the output.
+#' - **`out.width.px`**, **`out.height.px`** (810, 400, both integers): Width and
+#'   height of the plot in the output document, which can be different with its
+#'   physical `fig.width` and `fig.height`, i.e., plots can be scaled in the output
+#'   document. Unlike knitr's `out.width`, this is always set in pixels.
+#' - **`altair.fig.width`**, **`altair.fig.height`**: If set, is used instead of
+#'   `out.width.px` and `out.height.px` when writing Altair charts.
+#'
 #' @export
 eng_python <- function(options) {
 
@@ -108,11 +159,20 @@ eng_python <- function(options) {
 
   # iterate over top-level nodes and extract line numbers
   lines <- vapply(parsed$body, function(node) {
+    if(py_version() >= "3.8")
+      return(as_r_value(py_get_attr(node, "end_lineno")))
+    # `end_lineno` attribute was introduced in python3.8
+    # in earlier versions, fallback to using just lineno
+    # note, this can result in comments being attached to
+    # the wrong code chunk
+
     if (py_has_attr(node, "decorator_list") && length(node$decorator_list)) {
-      node$decorator_list[[1]]$lineno
+      out <- py_get_attr(node$decorator_list[[1]], "lineno")
     } else {
-      node$lineno
+      out <- py_get_attr(node, "lineno")
     }
+
+    as_r_value(out)
   }, integer(1))
 
   # it's possible for multiple statements to live on the
@@ -123,10 +183,22 @@ eng_python <- function(options) {
   # convert from lines to ranges (be sure to handle the zero-length case)
   ranges <- list()
   if (length(lines)) {
-    starts <- lines
-    ends <- c(lines[-1] - 1, length(code))
+
+    if(py_version() >= "3.8") {
+      # end_lineno attr only introduced in 3.8
+      ends <- lines
+      starts <- c(1L, ends[-length(ends)] + 1L)
+    } else {
+      starts <- lines
+      ends <- c(lines[-1] - 1, length(code))
+    }
     ranges <- mapply(c, starts, ends, SIMPLIFY = FALSE)
   }
+
+  # Stash some options.
+  is_hold <- identical(options$results, "hold")
+  is_include <- isTRUE(options$include)
+  jupyter_compat <- isTRUE(options$jupyter_compat)
 
   # line index from which source should be emitted
   pending_source_index <- 1
@@ -140,8 +212,11 @@ eng_python <- function(options) {
   # 'held' outputs, to be appended at the end (for results = "hold")
   held_outputs <- stack()
 
+  # Outputs to be appended to; these depend on the "hold" option.
+  outputs_target <- if (is_hold) held_outputs else outputs
+
   # synchronize state R -> Python
-  eng_python_synchronize_before()
+  eng_python_synchronize_before(options)
 
   # determine if we should capture errors
   # (don't capture errors during knit)
@@ -149,10 +224,22 @@ eng_python <- function(options) {
     identical(options$error, TRUE) ||
     identical(getOption("knitr.in.progress", default = FALSE), FALSE)
 
+  if(isFALSE(options$warning)) {
+    py_catch_warnings_ctxt <-
+      # need to set record = TRUE, otherwise custom implementations of
+      # `warning.showwarning()` leak warnings out of the context.
+      import("warnings", convert = FALSE)$catch_warnings(record = TRUE)
+    py_catch_warnings_ctxt$`__enter__`()
+    on.exit({
+      py_catch_warnings_ctxt$`__exit__`(NULL, NULL, NULL)
+    }, add = TRUE)
+  }
+
   for (i in seq_along(ranges)) {
 
     # extract range
     range <- ranges[[i]]
+    last_range <- i == length(ranges)
 
     # extract code to be run
     snippet <- extract(code, range)
@@ -161,21 +248,42 @@ eng_python <- function(options) {
     py_compile_eval("'__reticulate_placeholder__'")
 
     # use trailing semicolon to suppress output of return value
-    suppress <- grepl(";\\s*$", snippet)
+    suppress <- grepl(";\\s*$", snippet) || (jupyter_compat & !last_range)
     compile_mode <- if (suppress) "exec" else "single"
 
     # run code and capture output
-    captured <- if (capture_errors)
-      tryCatch(py_compile_eval(snippet, compile_mode), error = identity)
+    captured_stdout <- if (capture_errors) {
+      tryCatch(
+        py_compile_eval(snippet, compile_mode),
+        error = function(e) {
+
+          # if the chunk option is error = FALSE (the default).
+          # we'll need to bail and not evaluate to the next python expression.
+          if (identical(options$error, FALSE))
+            had_error <- TRUE
+
+          # format the exception object
+          etype <- py_get_attr(e, "__class__")
+          traceback <- import("traceback")
+          paste0(traceback$format_exception_only(etype, e),
+                 collapse = "")
+        }
+      )
+
+    }
     else
       py_compile_eval(snippet, compile_mode)
 
-    # handle matplotlib output
+    # handle matplotlib plots and other special output
     captured <- eng_python_autoprint(
-      captured = captured,
-      options  = options,
-      autoshow = i == length(ranges)
+      captured = captured_stdout,
+      options  = options
     )
+
+    # A trailing ';' suppresses output.
+    # In jupyter mode, only the last expression in a chunk has repr() output.
+    if (suppress)
+      captured <- captured_stdout
 
     # emit outputs if we have any
     has_outputs <-
@@ -185,51 +293,36 @@ eng_python <- function(options) {
     if (has_outputs) {
 
       # append pending source to outputs (respecting 'echo' option)
-      if (!identical(options$echo, FALSE) && !identical(options$results, "hold")) {
+      if (!identical(options$echo, FALSE) && !is_hold) {
         extracted <- extract(code, c(pending_source_index, range[2]))
+        if(!identical(options$collapse, TRUE) &&
+           identical(options$strip.white, TRUE)) {
+          extracted <- sub("^\\n+", "", sub("\\n+$", "", extracted))
+          # trimws(whitespace = ) requires R 3.6
+          # extracted <- trimws(extracted, whitespace = "[\n]")
+        }
         output <- structure(list(src = extracted), class = "source")
         outputs$push(output)
       }
 
       # append captured outputs (respecting 'include' option)
-      if (isTRUE(options$include)) {
+      if (is_include) {
+        # append captured output
+        if (!identical(captured, ""))
+          outputs_target$push(captured)
 
-        if (identical(options$results, "hold")) {
-
-          # append captured output
-          if (!identical(captured, ""))
-            held_outputs$push(captured)
-
-          # append captured images / figures
-          plots <- .engine_context$pending_plots$data()
-          for (plot in plots)
-            held_outputs$push(plot)
-          .engine_context$pending_plots$clear()
-
-        } else {
-
-          # append captured output
-          if (!identical(captured, ""))
-            outputs$push(captured)
-
-          # append captured images / figures
-          plots <- .engine_context$pending_plots$data()
-          for (plot in plots)
-            outputs$push(plot)
-          .engine_context$pending_plots$clear()
-
-        }
-
+        # append captured images / figures
+        for (plot in .engine_context$pending_plots$data())
+          outputs_target$push(plot)
+        .engine_context$pending_plots$clear()
       }
 
       # update pending source range
       pending_source_index <- range[2] + 1
 
       # bail if we had an error with 'error=FALSE'
-      if (identical(options$error, FALSE) && inherits(captured, "error")) {
-        had_error <- TRUE
+      if (had_error && identical(options$error, FALSE))
         break
-      }
 
     }
   }
@@ -247,8 +340,21 @@ eng_python <- function(options) {
     outputs$push(output)
   }
 
+  # check if we need to call matplotlib.pyplot.show()
+  # for any pending undisplayed plots
+  if(isTRUE(.globals$matplotlib_initialized)) {
+    plt <- import("matplotlib.pyplot")
+    if(length(plt$get_fignums()))
+      plt$show()
+  }
+
+  for (plot in .engine_context$pending_plots$data())
+    outputs_target$push(plot)
+  .engine_context$pending_plots$clear()
+
+
   # if we were using held outputs, we just inject the source in now
-  if (identical(options$results, "hold")) {
+  if (is_hold) {
     output <- structure(list(src = code), class = "source")
     outputs$push(output)
   }
@@ -303,7 +409,11 @@ eng_python_initialize <- function(options, envir) {
 
 }
 
-eng_python_knit_figure_path <- function(options, suffix = NULL) {
+eng_python_knit_include_graphics <-
+  function(options, suffix = NULL, write_figure = function(path) NULL) {
+
+  # ensure that both the figure file saving code, as well as
+  # knitr::include_graphics(), are run with the correct working directory.
 
   # we need to work in either base.dir or output.dir, depending
   # on which of the two has been requested by the user. (note
@@ -320,32 +430,36 @@ eng_python_knit_figure_path <- function(options, suffix = NULL) {
   # construct plot path
   plot_counter <- yoink("knitr", "plot_counter")
   number <- plot_counter()
-  path <- knitr::fig_path(
+  paths <- knitr::fig_path(
     suffix  = suffix %||% options$dev,
     options = options,
     number  = number
   )
 
-  # ensure parent path exists
-  dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
+  for (path in paths) {
+    # ensure parent path exists
+    dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
 
-  # return path
-  path
+    # write figures
+    write_figure(path)
+  }
+
+  # include the first requested path
+  knitr::include_graphics(paths[1])
 
 }
 
 eng_python_matplotlib_show <- function(plt, options) {
 
-  # get figure path
-  path <- eng_python_knit_figure_path(options)
+  on.exit(plt$close())
 
-  # save the current figure
-  dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
-  plt$savefig(path, dpi = options$dpi)
-  plt$clf()
-
-  # include the requested path
-  knitr::include_graphics(path)
+  # save figure file, return knitr::include_graphics() wrapped figure path
+  eng_python_knit_include_graphics(
+    options, write_figure = function(path) {
+      # save the current figure to all requested devices
+      plt$savefig(path, dpi = options$dpi)
+    }
+  )
 
 }
 
@@ -378,20 +492,53 @@ eng_python_initialize_hooks <- function(options, envir) {
 
 }
 
+eng_python_matplotlib_backend <- function() {
+
+  # allow override, just in case
+  envvars <- c("RETICULATE_MPLBACKEND", "MPLBACKEND")
+  for (envvar in envvars) {
+    override <- Sys.getenv(envvar, unset = NA)
+    if (!is.na(override))
+      return(override)
+  }
+
+  # if we're currently running testthat tests, force an 'agg' backend
+  testthat <- Sys.getenv("TESTTHAT", unset = NA)
+  if (identical(testthat, "true"))
+    return("agg")
+
+  # in RStudio Desktop, enforce a non-Qt matplotlib backend
+  #
+  # this is mainly important for older releases of RStudio which were built
+  # using Qt, since some conda installations might also bundle + use their own
+  # versions of Qt, and those Qt installations could be incompatible.
+  #
+  # newer versions of RStudio set the matplotlib backend to 'agg' more
+  # explicitly, so this branch could likely be removed in a future reticulate release
+  if (is_rstudio_desktop())
+    return("agg")
+
+  # prefer using the agg backend in non-interactive environments
+  # (matplotlib might prefer using the tkAgg backend, but we've seen
+  # issues when trying to use in some environments, e.g. Windows)
+  #
+  # https://github.com/rstudio/rstudio/issues/13840
+  if (!interactive())
+    return("agg")
+
+  # otherwise, use whatever backend was already configured
+  ""
+}
+
 eng_python_initialize_matplotlib <- function(options, envir) {
 
-  # mark initialization done
+  # early exit if we already initialized
+  # (this onload hook is registered for multiple matplotlib submodules)
   if (identical(.globals$matplotlib_initialized, TRUE))
     return(TRUE)
 
-  .globals$matplotlib_initialized <- TRUE
-
-  # attempt to enforce a non-Qt matplotlib backend. this is especially important
-  # with RStudio Desktop as attempting to use a Qt backend will cause issues due
-  # to mismatched Qt versions between RStudio and Anaconda environments, and
-  # will cause crashes when attempting to generate plots
-  testthat <- Sys.getenv("TESTTHAT", unset = NA)
-  if (is_rstudio_desktop() || identical(testthat, "true")) {
+  backend <- eng_python_matplotlib_backend()
+  if (nzchar(backend)) {
 
     matplotlib <- import("matplotlib", convert = TRUE)
 
@@ -400,13 +547,13 @@ eng_python_initialize_matplotlib <- function(options, envir) {
     # specific one when the backend is initialized later
     sys <- import("sys", convert = FALSE)
     if ("matplotlib.backends" %in% names(sys$modules)) {
-      matplotlib$pyplot$switch_backend("agg")
+      matplotlib$pyplot$switch_backend(backend)
     } else {
       version <- numeric_version(matplotlib$`__version__`)
       if (version < "3.3.0")
-        matplotlib$use("agg", warn = FALSE, force = TRUE)
+        matplotlib$use(backend, warn = FALSE, force = TRUE)
       else
-        matplotlib$use("agg", force = TRUE)
+        matplotlib$use(backend, force = TRUE)
     }
   }
 
@@ -416,6 +563,9 @@ eng_python_initialize_matplotlib <- function(options, envir) {
     return()
 
   plt <- import("matplotlib.pyplot", convert = FALSE)
+
+  # set up figure dimensions
+  plt$rc("figure", figsize = tuple(options$fig.width, options$fig.height))
 
   # override show implementation
   plt$show <- function(...) {
@@ -436,8 +586,7 @@ eng_python_initialize_matplotlib <- function(options, envir) {
 
   }
 
-  # set up figure dimensions
-  plt$rc("figure", figsize = tuple(options$fig.width, options$fig.height))
+  .globals$matplotlib_initialized <- TRUE
 
 }
 
@@ -461,8 +610,14 @@ eng_python_initialize_plotly <- function(options, envir) {
 }
 
 # synchronize objects R -> Python
-eng_python_synchronize_before <- function() {
+eng_python_synchronize_before <- function(options) {
   py_inject_r()
+  if(isTRUE(.globals$matplotlib_initialized)) {
+
+    # set up figure dimensions
+    plt <- import("matplotlib.pyplot")
+    plt$rc("figure", figsize = tuple(options$fig.width, options$fig.height))
+  }
 }
 
 # synchronize objects Python -> R
@@ -490,13 +645,28 @@ eng_python_validate_options <- function(options) {
 
 eng_python_is_matplotlib_output <- function(value) {
 
-  # extract 'boxed' matplotlib outputs
-  if (inherits(value, "python.builtin.list") && length(value) > 0)
-    value <- value[[0]]
+  matplotlib_plot_types <- c("matplotlib.artist.Artist",
+                             "matplotlib.container.Container",
+                             "matplotlib.image.AxesImage",
+                             "matplotlib.image.BboxImage",
+                             "matplotlib.image.FigureImage",
+                             "matplotlib.image.NonUniformImage",
+                             "matplotlib.image.PcolorImage")
 
-  # TODO: are there other types we care about?
-  inherits(value, "matplotlib.artist.Artist")
+  if (inherits(value, c("python.builtin.tuple", "python.builtin.list")) &&
+      length(value) > 0L) {
 
+    # some functions returned list-"boxed" images, like [<img>]
+    if (inherits(py_get_item(value, 0L), matplotlib_plot_types))
+      return(TRUE)
+
+    # plt.hist returns (<np.array>, <np.array>, <img>)
+    if(length(value) > 1L &&
+       inherits(py_get_item(value, length(value)-1L), matplotlib_plot_types))
+      return(TRUE)
+  }
+
+  inherits(value, matplotlib_plot_types)
 }
 
 eng_python_is_seaborn_output <- function(value) {
@@ -512,7 +682,7 @@ eng_python_is_altair_chart <- function(value) {
   # support different API versions, assuming that the class name
   # otherwise remains compatible
   classes <- class(value)
-  pattern <- "^altair\\.vegalite\\.v[[:digit:]]+\\.api\\.Chart$"
+  pattern <- "^altair\\.vegalite\\.v[[:digit:]]+\\.api\\.(HConcat|VConcat|Layer|Repeat|Facet)?Chart$"
   any(grepl(pattern, classes))
 
 }
@@ -533,7 +703,7 @@ eng_python_altair_chart_id <- function(options, ids) {
 
 }
 
-eng_python_autoprint <- function(captured, options, autoshow) {
+eng_python_autoprint <- function(captured, options) {
 
   # bail if no new value was produced by interpreter
   value <- py_last_value()
@@ -551,26 +721,20 @@ eng_python_autoprint <- function(captured, options, autoshow) {
   isHtml <- knitr::is_html_output()
 
   if (eng_python_is_matplotlib_output(value)) {
+    # We handle pending Matplotlib plots with fignums check later.
 
-    # by default, we suppress "side-effect" outputs from matplotlib
-    # objects; only when 'autoshow' is set will we try to render the
-    # associated matplotlib plot
-    #
-    # handle matplotlib output. note that the default hook installed by
-    # reticulate will update the 'pending_plots' item
-    if (autoshow) {
-      plt <- import("matplotlib.pyplot", convert = TRUE)
-      plt$show()
-    }
-
+    # Always suppress Matplotlib reprs
     return("")
 
   } else if (eng_python_is_seaborn_output(value)) {
 
     # get figure path
-    path <- eng_python_knit_figure_path(options)
-    value$savefig(path)
-    .engine_context$pending_plots$push(knitr::include_graphics(path))
+    included_path <- eng_python_knit_include_graphics(
+      options, write_figure = function(path) {
+      value$savefig(path)
+  })
+
+    .engine_context$pending_plots$push(included_path)
     return("")
 
   } else if (inherits(value, "pandas.core.frame.DataFrame")) {
@@ -579,7 +743,9 @@ eng_python_autoprint <- function(captured, options, autoshow) {
 
   } else if (isHtml && py_has_method(value, "_repr_html_")) {
 
-    data <- as_r_value(value$`_repr_html_`())
+    py_capture_output({
+      data <- as_r_value(value$`_repr_html_`())
+    })
     .engine_context$pending_plots$push(knitr::raw_html(data))
     return("")
 
@@ -587,29 +753,32 @@ eng_python_autoprint <- function(captured, options, autoshow) {
              py_module_available("psutil") &&
              py_module_available("kaleido")) {
 
-    path <- eng_python_knit_figure_path(options)
-    value$write_image(
-      file   = path,
-      width  = options$out.width.px,
-      height = options$out.height.px
+    included_path <- eng_python_knit_include_graphics(
+      options, write_figure = function(path) {
+        value$write_image(
+          file   = path,
+          width  = options$out.width.px,
+          height = options$out.height.px
+        )
+      }
     )
-    .engine_context$pending_plots$push(knitr::include_graphics(path))
+    .engine_context$pending_plots$push(included_path)
     return("")
 
   } else if (eng_python_is_altair_chart(value)) {
 
-    # set width if it's not already set
-    width <- value$width
-    if (inherits(width, "altair.utils.schemapi.UndefinedType")) {
-      width <- options$altair.fig.width %||% options$out.width.px %||% 810L
-      value <- value$properties(width = width)
+    # set width and height if it's not already set
+    # This only applies to Chart objects, compound charts like HConcatChart
+    # don't have a 'width' or 'height' property attribute.
+    # TODO: add support for propagating width/height options from knitr to
+    # altair compound charts
+    width <- py_get_attr(value, "width", TRUE)
+    if (!is.null(options$altair.fig.width)) {
+      value <- value$properties(width = options$altair.fig.width)
     }
-
-    # set height if it's not already set
-    height <- value$height
-    if (inherits(height, "altair.utils.schemapi.UndefinedType")) {
-      height <- options$altair.fig.height %||% options$out.height.px %||% 400L
-      value <- value$properties(height = height)
+    height <- py_get_attr(value, "height", TRUE)
+    if (!is.null(options$altair.fig.height)) {
+      value <- value$properties(height = options$altair.fig.height)
     }
 
     # set a unique id (used for div container for figure)
@@ -620,9 +789,13 @@ eng_python_autoprint <- function(captured, options, autoshow) {
       data <- as_r_value(value$to_html(output_div = id))
       .engine_context$pending_plots$push(knitr::raw_html(data))
     } else {
-      path <- eng_python_knit_figure_path(options)
-      value$save(path)
-      .engine_context$pending_plots$push(knitr::include_graphics(path))
+
+      included_path <- eng_python_knit_include_graphics(
+        options, write_figure = function(path) {
+          value$save(path)
+        }
+      )
+      .engine_context$pending_plots$push(included_path)
     }
 
     return("")

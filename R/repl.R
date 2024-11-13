@@ -89,6 +89,19 @@ repl_python <- function(
     on.exit(teardown(), add = TRUE)
   }
 
+
+  ensure_python_initialized()
+  if (is.null(input) &&
+      is_positron() &&
+      exists(".ps.reticulate_open", inherits = TRUE)) {
+
+    eval(call(".ps.reticulate_open"))
+
+    # TODO: seems we need to rerun py_inject_r(), possibly other init hooks.
+    # TODO: kernal initializion drops pre-existing objects in __main__
+    return(invisible())
+  }
+
   # split provided code on newlines
   if (!is.null(input))
     input <- unlist(strsplit(input, "\n", fixed = TRUE))
@@ -149,8 +162,13 @@ repl_python <- function(
   handle_error <- function(output) {
     failed <- inherits(output, "error")
     if (failed) {
-      error <- py_last_error()
-      message(paste(error$type, error$value, sep = ": "))
+      error_message <- py_last_error()$message
+
+      if (identical(.Platform$GUI, "RStudio") &&
+          requireNamespace("cli", quietly = TRUE))
+        error_message <- make_filepaths_clickable(error_message)
+
+      message(error_message, appendLF = !endsWith(error_message, "\n"))
     }
     failed
   }
@@ -164,15 +182,7 @@ repl_python <- function(
   repl <- function() {
 
     # flush stdout, stderr on each REPL iteration
-    on.exit({
-
-      if (!is.null(sys$stdout) && !is.null(sys$stdout$flush))
-        sys$stdout$flush()
-
-      if (!is.null(sys$stderr) && !is.null(sys$stderr$flush))
-        sys$stderr$flush()
-
-    }, add = TRUE)
+    on.exit(py_flush_output(), add = TRUE)
 
     # read input (either from user or from code)
     prompt <- if (buffer$empty()) ">>> " else "... "
@@ -250,7 +260,7 @@ repl_python <- function(
       }
 
       # similar handling for help requests postfixed with '?'
-      if (grepl("[?]\\s*$", trimmed)) {
+      if (grepl("(^[\\#].*)[?]\\s*$", trimmed, perl = TRUE)) {
         replaced <- sub("[?]\\s*$", "", trimmed)
         code <- sprintf("help(\"%s\")", replaced)
         py_run_string(code)

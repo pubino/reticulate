@@ -9,9 +9,9 @@
 \usage{
 import(module, as = NULL, convert = TRUE, delay_load = FALSE)
 
-import_main(convert = TRUE)
+import_main(convert = TRUE, delay_load = FALSE)
 
-import_builtins(convert = TRUE)
+import_builtins(convert = TRUE, delay_load = FALSE)
 
 import_from_path(module, path = ".", convert = TRUE, delay_load = FALSE)
 }
@@ -57,20 +57,24 @@ ensure your module is lazy-loaded (e.g. because you are a package author and
 want to avoid initializing Python before the user has explicitly requested it),
 then passing \code{TRUE} is normally the right choice.
 
-You can also provide a list of named functions, which act as callbacks to be
-run when the module is later loaded. For example:
+You can also provide a named list: \code{"before_load"}, \code{"on_load"} and
+\code{"on_error"} can be functions , which act as callbacks to be run when the
+module is later loaded. \code{"environment"} can be a character
+vector of preferred python environment names to
+search for and use. For example:
 
 \if{html}{\out{<div class="sourceCode">}}\preformatted{delay_load = list(
-  
+
   # run before the module is loaded
   before_load = function() \{ ... \}
-  
+
   # run immediately after the module is loaded
   on_load = function() \{ ... \}
-  
+
   # run if an error occurs during module import
   on_error = function(error) \{ ... \}
-  
+
+  environment = c("r-preferred-venv1", "r-preferred-venv2")
 )
 }\if{html}{\out{</div>}}
 

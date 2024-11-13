@@ -50,7 +50,12 @@ python_info <- function(path) {
   # Some installations might not place Python within a 'Scripts' or 'bin'
   # sub-directory, so look in the root directory too.
   prefixes <- list(NULL, if (is_windows()) "Scripts" else "bin")
-  suffixes <- if (is_windows()) "python.exe" else c("python", "python3")
+  suffixes <- if (is_windows())
+    "python.exe"
+  else if (startsWith(basename(path), "python3"))
+    "python3" # don't resolve 'python' for 'python3'
+  else
+    c("python", "python3")
 
   # placeholder for a discovered system python
   systemPython <- NULL
@@ -117,12 +122,19 @@ python_info_virtualenv <- function(path) {
   python <- file.path(path, suffix)
 
   # return details
-  list(
+  out <- list(
     python = python,
     type = "virtualenv",
     root = path
   )
 
+  if (file.exists(cfg <- file.path(out$root, "pyvenv.cfg"))) {
+    starter <- grep("^home = ", readLines(cfg), value = TRUE)
+    if(length(starter))
+      out$starter <- str_drop_prefix(starter, "home = ")
+  }
+
+  out
 }
 
 python_info_condaenv <- function(path) {
@@ -132,7 +144,7 @@ python_info_condaenv <- function(path) {
   python <- file.path(path, suffix)
 
   # find path to conda associated with this env
-  conda <- python_info_condaenv_find(path)
+  conda <- get_python_conda_info(python)$conda
 
   list(
     python = python,
@@ -140,51 +152,6 @@ python_info_condaenv <- function(path) {
     root   = path,
     conda  = conda
   )
-
-}
-
-python_info_condaenv_find <- function(path) {
-
-  # first, check if we have a condabin
-  exe <- if (is_windows()) "conda.exe" else "conda"
-  conda <- file.path(path, "condabin", exe)
-  if (file.exists(conda))
-    return(conda)
-
-  if (is_windows()) {
-    # in Anaconda base env, conda.exe lives under Scripts
-    conda <- file.path(path, "Scripts", exe)
-    if (file.exists(conda))
-      return(conda)
-
-    # in ArcGIS env, conda.exe lives in a parent directory
-    conda <- file.path(path, "../..", "Scripts", exe)
-    conda <- normalizePath(conda, winslash = "/", mustWork = FALSE)
-    if (file.exists(conda))
-      return(conda)
-
-  }
-
-  # read history file
-  histpath <- file.path(path, "conda-meta/history")
-  if (!file.exists(histpath))
-    return(NULL)
-
-  history <- readLines(histpath, warn = FALSE)
-
-  # look for cmd line
-  pattern <- "^[[:space:]]*#[[:space:]]*cmd:[[:space:]]*"
-  lines <- grep(pattern, history, value = TRUE)
-  if (length(lines) == 0)
-    return(NULL)
-
-  # get path to conda script used
-  script <- sub("^#\\s+cmd: (.+)\\s+create\\s+.*", "\\1", lines[[1]])
-
-  # on Windows, a wrapper script is recorded in the history,
-  # so instead attempt to find the real conda binary
-  conda <- file.path(dirname(script), exe)
-  normalizePath(conda, winslash = "/", mustWork = FALSE)
 
 }
 

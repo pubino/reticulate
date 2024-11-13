@@ -22,18 +22,20 @@ use_miniconda(condaenv = NULL, required = NULL)
 \item{python}{The path to a Python binary.}
 
 \item{required}{Is the requested copy of Python required? If \code{TRUE}, an error will be
-emitted if the requested copy of Python does not exist. Otherwise, the
+emitted if the requested copy of Python does not exist. If \code{FALSE}, the
 request is taken as a hint only, and scanning for other versions will still
-proceed.}
+proceed. A value of \code{NULL} (the default), is equivalent to \code{TRUE}.}
 
 \item{version}{The version of Python to use. \code{reticulate} will search for versions of
 Python as installed by the \code{\link[=install_python]{install_python()}} helper function.}
 
 \item{virtualenv}{Either the name of, or the path to, a Python virtual environment.}
 
-\item{condaenv}{The conda environment to use. This can be the name, the absolute prefix path
-or the absolute path to the python binary. If the name is ambiguous, the
-first environment is used and a warning is issued.}
+\item{condaenv}{The conda environment to use. For \code{use_condaenv()}, this can be the name,
+the absolute prefix path, or the absolute path to the python binary. If
+the name is ambiguous, the first environment is used and a warning is
+issued. For \code{use_miniconda()}, the only conda installation searched is
+the one installed by \code{install_miniconda()}.}
 
 \item{conda}{The path to a \code{conda} executable. By default, \code{reticulate} will check the
 \code{PATH}, as well as other standard locations for Anaconda installations.}

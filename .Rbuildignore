@@ -17,6 +17,7 @@ README\.html
 ^issues$
 ^log$
 ^logs$
+^tools$
 ^pkgdown$
 ^revdep$
 ^tags$
@@ -33,3 +34,10 @@ README\.html
 __pycache__
 ^cran-comments\.md$
 ^CRAN-SUBMISSION$
+^\.vscode$
+^Dockerfile$
+^\.dockerignore$
+^\.git-blame-ignore-revs$
+^rchk$
+^\.cache$
+^compile_commands\.json$
