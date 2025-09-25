@@ -1,5 +1,101 @@
 # reticulate (development version)
 
+- Reticulate now clears its cache automatically every 120 days. Configure the interval
+  in `.Rprofile` with: `options(reticulate.max_cache_age = as.difftime(30, units = "days"))`.
+
+- `install_miniconda()` now installs miniforge instead of miniconda (#1800, #1820).
+
+- Adds support for requesting Python versions with a wildcard pattern `x.x.*` such as `==3.12.*` in `virtualenv_starter()`, `py_require()`, and related functions (#1825)
+
+- Restored compatability with `uv` versions >= 0.8.0 (#1818).
+
+- `py_require()` now gives a better message when a user erroneously declares
+   a module from the Python standard library as a required package (@lazappi, #1788)
+
+- Positron's reticulate integration will now be automatically enabled when
+  the reticulate package is loaded in Positron (#1822).
+
+- `with()` now forwards errors to Python context manager exit handlers
+  (e.g., so database transactions can roll back cleanly) (#1840, #1841)
+
+# reticulate 1.43.0
+
+- Fixed usage of micromamba and mamba, next-generation conda environment management tools.
+  reticulate now prefers to use micromamba, mamba, then conda when managing environments (@gdevenyi, #1771).
+
+- Added `str()`, `dim()`, and `t()` S3 methods for NumPy Arrays.
+
+- Fixed a segfault observed on R session exit (#1785, #1786).
+
+- Added check in `install_miniconda()` if existing files will be overwritten. (#1794, #1796)
+
+- Fixed error in `install_python()` under R 4.5 when the requested Python
+  version has a `":latest"` suffix, as it does by default. (#1792, #1797)
+
+- Fixed error in `get_python_conda_info()` when conda not found through `conda-meta/history`
+  and `NULL` is passed to `normalizePath` (#1184)
+
+- Hotfix to pin `uv` version resolved by reticulate to `<0.8.0`. (#1812)
+
+- Python discovery by `uv` is much faster now. The internal utility `uv_python_list()`
+  searches only for managed python environments by default. Users can request discovery of
+  system pythons by setting `UV_PYTHON_PREFERENCE`. Also, `uv_python_list()` will now discover
+  pyenv pythons and python binaries installed by `install_python()` if a system python is requested. (#1810)
+
+# reticulate 1.42.0
+
+- Fixed an issue in RStudio on Windows where interrupts were
+  ignored while Python code was executing (#1753).
+
+- Updates for Positron to fix issues with `repl_python()` and Variables Pane (#1755).
+
+- Fixed an issue where `[` received Python objects as slice arguments.
+  e.g., `x[start:end]` when `start` or `end` were Python objects (#1731).
+
+- The `[` method will now translate symbol `..` to a
+  Python Ellipsis `...`. (#1763)
+
+- The `[` method can now accept index values greater than 2^31 (#1769)
+
+- Reticulate-managed `uv` can now resolve system-installed Pythons,
+  supporting platforms where pre-built binaries are unavailable, such as
+  musl-based Alpine Linux (#1751, #1752).
+
+- `uv_run_tool()` gains an `exclude_newer` argument (#1748).
+
+- `py_register_load_hook()` is now exported to enable usage
+  described in the "Using reticulate in an R package vignette" (#1754).
+  https://rstudio.github.io/reticulate/articles/package.html
+
+- Internal changes to support R-devel (4.5) and R API updates (#1747, #1774).
+
+- Internal fixes to prevent reticulate-managed `uv` from writing outside
+  reticulates cache directory (#1745).
+
+- Fixed an issue with pointing reticulate at a pyenv shim python (#1758)
+
+# reticulate 1.41.0
+
+- New `py_require()` function for declaring Python requirements for
+  the current R session. For details, see updated vignettes and help:
+
+  - Installing Python Packages: https://rstudio.github.io/reticulate/dev/articles/python_packages.html
+  - Using reticulate in an R Package: https://rstudio.github.io/reticulate/dev/articles/package.html
+  - `py_require()` help: https://rstudio.github.io/reticulate/dev/reference/py_require.html
+
+- New `uv_run_tool()` function for running command line tools distributed via Python packages.
+
+- Raw R arrays and NumPy arrays with dtype "V1" ("void8") now convert between each other.
+  Use `r_to_py(as.array(x))` to efficiently convert raw vectors to NumPy arrays, and
+  `py_to_r(array$view("V1"))` to efficiently convert NumPy arrays to raw vectors. (#1734)
+
+- Fixed an issue with using Python 3.12 on Linux (#1712, #1714).
+
+- Fixed an issue where `virtualenv_starter()` would not discover a
+  custom built Python (#1704).
+
+# reticulate 1.40.0
+
 - The S3 classes for some (rarely encountered) Python objects have changed.
   Only Python objects with non-standard `__module__` values are affected.
   If a Python object’s parent class’s `__module__` attribute does not resolve to a string,
@@ -18,22 +114,24 @@
 
 - Fixed error when attempting to use a python venv created with `uv` (#1678)
 
-- Fixed error where `py_discover_config()` attempted to detect
-  Windows App Store Python installations, which are now excluded
-  from discovery by both `py_discover_config()` and `virtualenv_starter()`
-  (#1656, #1673).
+- Resolved an issue where `py_discover_config()` attempted to detect
+  Windows App Store Python installations. These are now excluded from
+  discovery by both `py_discover_config()` and `virtualenv_starter()` (#1656, #1673).
 
-- Fixed error when converting an empty NumPy char array to R (#1662).
+- Fixed an error when converting an empty NumPy char array to R (#1662).
 
-- Fixed error when using reticulate with radian (#1668, #1670).
+- Fixed an error when using reticulate with radian (#1668, #1670).
 
-- Fixed segfault encountered when running Python finalizer (#1663, #1664)
+- Fixed a segfault encountered when running the Python session finalizer (#1663, #1664).
 
-- Fixed segfault encountered in RStudio when rapidly switching
-  between R and Python chunks in a Quarto document (#1665).
+- Resolved a segfault in RStudio when rapidly switching between
+  R and Python chunks in a Quarto document (#1665).
 
 - Improved behavior when the conda binary used to create an environment
-  could not be resolved (contributed by @tl-hbk, #1654, #1659)
+  cannot be resolved (contributed by @tl-hbk, #1654, #1659).
+
+- Added Positron support for the Variables Pane and `repl_python()`
+  (#1692, #1641, #1648, #1658, #1681, #1687).
 
 # reticulate 1.39.0
 

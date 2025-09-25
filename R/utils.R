@@ -231,12 +231,10 @@ yoink <- function(package, symbol) {
   do.call(":::", list(package, symbol))
 }
 
-defer <- function(expr, envir = parent.frame()) {
-  call <- substitute(
-    evalq(expr, envir = envir),
-    list(expr = substitute(expr), envir = parent.frame())
-  )
-  do.call(base::on.exit, list(substitute(call), add = TRUE), envir = envir)
+defer <- function(expr, envir = parent.frame(), priority = c("first", "last")) {
+  thunk <- as.call(list(function() expr))
+  after <- priority == "last"
+  do.call(base::on.exit, list(thunk, TRUE, after), envir = envir)
 }
 
 #' @importFrom utils head
@@ -630,7 +628,7 @@ debuglog <- function(fmt, ...) {
   cat(msg, file = "/tmp/reticulate.log", sep = "\n", append = TRUE)
 }
 
-system2t <- function(command, args, ...) {
+system2t <- function(command, args = character(), ...) {
   # system2, with a trace
   # mimic bash's set -x usage of a "+" prefix for now
   # maybe someday take a dep on {cli} and make it prettier
@@ -646,13 +644,62 @@ maybe_shQuote <- function(x) {
 }
 
 
-rm_all_reticulate_state <- function() {
-  unlink(user_data_dir("r-reticulate", NULL), recursive = TRUE, force = TRUE)
-  unlink(user_data_dir("r-miniconda", NULL), recursive = TRUE, force = TRUE)
-  unlink(user_data_dir("r-miniconda-arm64", NULL), recursive = TRUE, force = TRUE)
-  unlink(miniconda_path_default(), recursive = TRUE, force = TRUE)
+rm_all_reticulate_state <- function(external = FALSE) {
+
+  rm_rf <- function(...)
+    try(unlink(path.expand(c(...)), recursive = TRUE, force = TRUE))
+
+  if (external) {
+    if (!is.null(uv <- uv_binary(FALSE))) {
+      system2(uv, c("cache", "clean"))
+      withr::with_envvar(c("NO_COLOR"="1"), {
+        rm_rf(system2(uv, c("python", "dir"), stdout = TRUE))
+        rm_rf(system2(uv, c("tool", "dir"), stdout = TRUE))
+      })
+    }
+
+    if (nzchar(Sys.which("pip3")))
+      system2("pip3", c("cache", "purge"))
+  }
+
+  rm_rf(user_data_dir("r-reticulate", NULL))
+  rm_rf(user_data_dir("r-miniconda", NULL))
+  rm_rf(user_data_dir("r-miniconda-arm64", NULL))
+  rm_rf(rappdirs::user_cache_dir("r-reticulate", NULL))
+  rm_rf(miniconda_path_default())
+  rm_rf(virtualenv_path("r-reticulate"))
+  for (venv in virtualenv_list()) {
+    if (startsWith(venv, "r-"))
+      rm_rf(virtualenv_path(venv))
+  }
+  rm_rf(reticulate_cache_dir())
+  rm_rf(tools::R_user_dir("reticulate", "cache"))
+  rm_rf(tools::R_user_dir("reticulate", "data"))
+  rm_rf(tools::R_user_dir("reticulate", "config"))
+  invisible()
 }
 
+
+reticulate_cache_dir <- function(...) {
+  root <- if (getRversion() > "4.0") {
+    tools::R_user_dir("reticulate", "cache")
+  } else {
+    path.expand(rappdirs::user_cache_dir("r-reticulate", NULL))
+  }
+
+  normalizePath(file.path(root, ...), mustWork = FALSE)
+}
+
+
+reticulate_data_dir <- function(...) {
+  root <- if (getRversion() > "4.0") {
+    tools::R_user_dir("reticulate", "data")
+  } else {
+    path.expand(user_data_dir("r-reticulate", NULL))
+  }
+
+  normalizePath(file.path(root, ...), mustWork = FALSE)
+}
 
 user_data_dir <- function(...) {
   expand_env_vars(rappdirs::user_data_dir(...))
@@ -687,3 +734,37 @@ expand_env_vars <- function(x) {
 }
 
 `%""%` <- function(x, y) if(identical(x, "")) y else x
+
+parent.pkg <- function(env = parent.frame(2)) {
+  if (isNamespace(env <- topenv(env)))
+    as.character(getNamespaceName(env)) # unname
+  else
+    NULL # print visible
+}
+
+warn_and_return <- function(..., call. = TRUE) {
+  cond <- if (inherits(..1, "condition")) {
+    ..1
+  } else {
+    simpleWarning(.makeMessage(...))
+  }
+
+  cond$call <- if (call.) sys.call(-1L) else NULL
+
+  warning(cond)
+  rlang::eval_bare(quote(return(invisible())), parent.frame())
+}
+
+# paste collapse and
+pc_and <-  function (..., sep = "")  {
+  x <- paste(..., sep = sep, collapse = NULL)
+  lx <- length(x)
+  if (lx == 0L)
+    ""
+  else if (lx == 1L)
+    x
+  else if (lx == 2L)
+    paste0(x, collapse = " and ")
+  else
+    paste0(paste0(x[-lx], collapse = ", "), ", and ", x[lx])
+}

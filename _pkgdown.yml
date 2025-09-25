@@ -2,13 +2,17 @@
 url: https://rstudio.github.io/reticulate
 
 template:
-  params:
-    bootswatch: flatly
+  bootstrap: 5
+  bootswatch: flatly
 
 development:
   mode: auto
 
 reference:
+
+  - title: "Python Requirements"
+    contents:
+      - py_require
 
   - title: "Python Execution"
     contents:
@@ -95,6 +99,7 @@ reference:
       - configure_environment
       - conda-tools
       - conda_run2
+      - uv_run_tool
 
   - title: "Miniconda"
     contents:

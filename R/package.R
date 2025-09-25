@@ -31,6 +31,10 @@ is_python_initialized <- function() {
   !is.null(.globals$py_config)
 }
 
+is_epheremal_venv_initialized <- function() {
+  isTRUE(.globals$py_config$ephemeral)
+}
+
 is_python_finalized <- function() {
   identical(.globals$finalized, TRUE)
 }
@@ -83,6 +87,11 @@ ensure_python_initialized <- function(required_module = NULL) {
   if (is.function(callback))
     callback()
 
+  # re-install interrupt handler -- note that RStudio tries to re-install its
+  # own interrupt handler when reticulate is initialized, but reticulate needs
+  # to handle interrupts itself (and it can do so compatibly with RStudio)
+  install_interrupt_handlers()
+
   # call init hooks
   call_init_hooks()
 
@@ -102,7 +111,7 @@ initialize_python <- function(required_module = NULL, use_environment = NULL) {
 
   # provide hint to install Miniconda if no Python is found
   python_not_found <- function(msg) {
-    hint <- "Please create a default virtual environment with `reticulate::virtualenv_create('r-reticulate')`."
+    hint <- 'See the Python "Order of Discovery" here: https://rstudio.github.io/reticulate/articles/versions.html#order-of-discovery.'
     stop(paste(msg, hint, sep = "\n"), call. = FALSE)
   }
 
@@ -164,6 +173,9 @@ initialize_python <- function(required_module = NULL, use_environment = NULL) {
 
   # munge PATH for python (needed so libraries can be found in some cases)
   oldpath <- python_munge_path(config$python)
+  # also munge LD_LIBRARY_PATH on Linux
+  # (needed for Python 3.12 preinstalled on GHA runners, perhaps other installations too)
+  prefix_python_lib_to_ld_library_path(config$python)
 
   # on macOS, we need to do some gymnastics to ensure that Anaconda
   # libraries can be properly discovered (and this will only work in RStudio)
@@ -225,9 +237,12 @@ initialize_python <- function(required_module = NULL, use_environment = NULL) {
 
   )
 
-  # allow disabling the Python finalizer
-  if (!tolower(Sys.getenv("RETICULATE_DISABLE_PYTHON_FINALIZER")) %in% c("true", "1", "yes"))
-    reg.finalizer(.globals, function(e) py_finalize(), onexit = TRUE)
+  # allow enabling the Python finalizer
+  reg.finalizer(.globals, function(e) {
+    try(py_allow_threads_impl(FALSE))
+    if (tolower(Sys.getenv("RETICULATE_ENABLE_PYTHON_FINALIZER")) %in% c("true", "1", "yes"))
+      py_finalize()
+  }, onexit = TRUE)
 
   # set available flag indicating we have py bindings
   config$available <- TRUE

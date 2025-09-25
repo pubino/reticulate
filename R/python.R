@@ -819,7 +819,10 @@ length.python.builtin.list <- function(x) {
 length.python.builtin.object <- function(x) {
 
   # return 0 if Python not yet available
-  if (py_is_null_xptr(x) || !py_available())
+  # Note: some packages (rgeedim) use `length(module) == 0` as a way to check if
+  # an object is a delayed module without forcing it to load.
+  # Note, a better way to check is: reticulate::py_module_available("module_name")
+  if (py_is_module_proxy(x) || !py_available() || py_is_null_xptr(x))
     return(0L)
 
   # otherwise, try to invoke the object's __len__ method
@@ -900,9 +903,15 @@ py_unicode <- function(str) {
 #'
 #' @export
 with.python.builtin.object <- function(data, expr, as = NULL, ...) {
-
   # enter the context
   context <- data$`__enter__`()
+
+  # ensure __exit__ sees real exception information when errors bubble out
+  exc_type <- exc_value <- exc_tb <- NULL
+  on.exit({
+    data$`__exit__`(exc_type, exc_value, exc_tb)
+  }, add = TRUE)
+
 
   # check for as and as_envir
   if (!missing(as)) {
@@ -920,12 +929,20 @@ with.python.builtin.object <- function(data, expr, as = NULL, ...) {
     assign(as, context, envir = envir)
   }
 
-  # evaluate the expression and exit the context
-  tryCatch(force(expr),
-           finally = {
-             data$`__exit__`(NULL, NULL, NULL)
-           }
-          )
+  tryCatch(
+    force(expr),
+    interrupt = function(e) {
+      exc_type <<- py_eval("__builtins__.KeyboardInterrupt")
+      exc_value <<- py_eval("__builtins__.KeyboardInterrupt()")
+      stop(e)
+    },
+    error = function(e) {
+      exc_value <<- if (is_py_object(e)) e else r_to_py(e)
+      exc_type <<- py_get_attr(exc_value, "__class__", TRUE)
+      exc_tb <<- py_get_attr(exc_value, "__traceback__", silent = TRUE)
+      stop(e)
+    }
+  )
 }
 
 #' Create local alias for objects in \code{with} statements.
@@ -1067,7 +1084,7 @@ py_str.python.builtin.object <- function(object, ...) {
 
 #' @export
 format.python.builtin.module <- function(x, ...) {
-  if(py_is_module_proxy(x))
+  if (py_is_module_proxy(x))
     return(paste0("Module(", get("module", envir = x), ")", sep = ""))
   NextMethod()
 }
@@ -1428,7 +1445,7 @@ py_resolve_module_proxy <- function(proxy) {
 
   # fixup the proxy. Note, the proxy may have already been fixed up,
   # if `import(module)` triggered hooks to run registered via
-  # (unexported) py_register_load_hook()
+  # py_register_load_hook()
   py_module_proxy_import(proxy)
 
 
@@ -1582,11 +1599,29 @@ py_module_loaded <- function(module) {
   module %in% modules
 }
 
+
+#' Register a Python module load hook
+#'
+#' Register an R function to be called when a Python module is first loaded in
+#' the current R session. This can be used for tasks such as:
+#'
+#' - Delayed registration of S3 methods to accommodate different versions of a Python module.
+#' - Configuring module-specific logging streams.
+#'
+#' @param module String, the name of the Python module.
+#' @param hook Function, called with no arguments. If `module` is already
+#'   loaded, `hook()` is called immediately.
+#'
+#' @return `NULL` invisibly. Called for its side effect.
+#' @export
+#' @keywords internal
 py_register_load_hook <- function(module, hook) {
 
   # if the module is already loaded, just run the hook
-  if (py_module_loaded(module))
-    return(hook())
+  if (py_module_loaded(module)) {
+    hook()
+    return(invisible())
+  }
 
   # otherwise, register the hook to be run on next load
   name <- paste("reticulate", module, "load", sep = "::")
@@ -1828,6 +1863,13 @@ type_sum.python.builtin.object <- function(x) {
 print.py_error <- function(x, ...) {
 
   py_error_message <- x$message
+
+  # Try to unescape newline and ANSI escape character if needed. This is usually
+  # unnecessary, but is been occasionally required, notably with Keras.
+  msg <- py_error_message
+  msg <- gsub("\\\\n", "\n", msg, useBytes = TRUE)
+  msg <- gsub("\\\\x1b", "\x1b", msg, useBytes = TRUE)
+  py_error_message <- msg
 
   if (identical(.Platform$GUI, "RStudio") &&
       requireNamespace("cli", quietly = TRUE) &&
