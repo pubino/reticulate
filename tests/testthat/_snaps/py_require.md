@@ -18,7 +18,7 @@
             requirements are unsatisfiable.
       uv error code: 1
       -- Current requirements -------------------------------------------------
-       Python:   3.11.xx (reticulate default)
+       Python:   3.12.xx (reticulate default)
        Packages: numpy, numpy<2, numpy>=2
       -------------------------------------------------------------------------
       Error in uv_get_or_create_env() : 
@@ -142,7 +142,7 @@
             notexists, we can conclude that your requirements are unsatisfiable.
       uv error code: 1
       -- Current requirements -------------------------------------------------
-       Python:   3.11.xx (reticulate default)
+       Python:   3.12.xx (reticulate default)
        Packages: numpy, pandas, notexists
       -------------------------------------------------------------------------
       Error in uv_get_or_create_env() : 
@@ -167,8 +167,8 @@
       Error in resolve_python_version(constraints = python_version, uv = uv) : 
         Requested Python version constraints could not be satisfied.
         constraints: ">=3.10,<3.10"
-      Available Python versions found: 3.11.xx ....
       Hint: Call `py_require(python_version = <string>, action = "set")` to replace constraints.
+      Available Python versions found: 3.11.xx ....
       Calls: uv_get_or_create_env -> resolve_python_version
       Execution halted
       ------- session end -------
@@ -189,7 +189,7 @@
       > py_require()
       ══════════════════════════ Python requirements ══════════════════════════
       ── Current requirements ─────────────────────────────────────────────────
-       Python:   [No Python version specified. Will default to '3.11.xx']
+       Python:   [No Python version specified. Will default to '3.12.xx']
        Packages: numpy, pandas, numpy==2
       ── R package requests ───────────────────────────────────────────────────
       R package  Python packages                           Python version      
@@ -215,7 +215,7 @@
       > py_require()
       ══════════════════════════ Python requirements ══════════════════════════
       ── Current requirements ─────────────────────────────────────────────────
-       Python:   [No Python version specified. Will default to '3.11.xx']
+       Python:   [No Python version specified. Will default to '3.12.xx']
        Packages: numpy, pandas
       ── R package requests ───────────────────────────────────────────────────
       R package  Python packages                           Python version      
@@ -243,7 +243,7 @@
       > py_require()
       ══════════════════════════ Python requirements ══════════════════════════
       ── Current requirements ─────────────────────────────────────────────────
-       Python:   [No Python version specified. Will default to '3.11.xx']
+       Python:   [No Python version specified. Will default to '3.12.xx']
        Packages: numpy, pandas
        Exclude:  Anything newer than 1990-01-01
       ── R package requests ───────────────────────────────────────────────────
@@ -342,7 +342,7 @@
             can conclude that your requirements are unsatisfiable.
       uv error code: 1
       -- Current requirements -------------------------------------------------
-       Python:   3.11.xx (reticulate default)
+       Python:   3.12.xx (reticulate default)
        Packages: numpy, os
       -------------------------------------------------------------------------
       Hint: `py_require()` expects Python package names rather than Python module names.
@@ -356,4 +356,22 @@
       ------- session end -------
       success: false
       exit_code: 1
+
+# py_require() warns missing packages in a virtual env
+
+    Code
+      do.call(r_session, list(force_managed_python = FALSE, exprs = expr))
+    Output
+      > library(reticulate)
+      > use_virtualenv("***", 
+      +     required = TRUE)
+      > py_require("polars")
+      > config <- py_config()
+      Warning message:
+      Some Python package requirements declared via `py_require()` are not installed in the selected Python environment: (***)
+        polars 
+      > 
+      ------- session end -------
+      success: true
+      exit_code: 0
 

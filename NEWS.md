@@ -1,13 +1,30 @@
 # reticulate (development version)
 
+# reticulate 1.44.1
+
+- The default Python version in `install_python()` 
+  and `conda_create()` is now 3.12 (#1862).
+
+- Fix error in `virtualenv_create()`/`virtualenv_starter()` (#1861).
+
+- Fix display of Python variables in the Positron Variables Pane (#1859).
+
+# reticulate 1.44.0
+
 - Reticulate now clears its cache automatically every 120 days. Configure the interval
   in `.Rprofile` with: `options(reticulate.max_cache_age = as.difftime(30, units = "days"))`.
 
 - `install_miniconda()` now installs miniforge instead of miniconda (#1800, #1820).
 
+- New helpers for reading and writing requirements files,
+ `py_write_requirements()` and `py_read_requirements()` (#1846).
+
 - Adds support for requesting Python versions with a wildcard pattern `x.x.*` such as `==3.12.*` in `virtualenv_starter()`, `py_require()`, and related functions (#1825)
 
 - Restored compatability with `uv` versions >= 0.8.0 (#1818).
+
+- `virtualenv_starter()` now discovers Python installations managed by
+  external `uv` installations (#1849).
 
 - `py_require()` now gives a better message when a user erroneously declares
    a module from the Python standard library as a required package (@lazappi, #1788)
@@ -17,6 +34,13 @@
 
 - `with()` now forwards errors to Python context manager exit handlers
   (e.g., so database transactions can roll back cleanly) (#1840, #1841)
+
+- Fixed `!!` in string literals being wrongly expanded to a `%system` magic in
+  `repl_python()`. Added support for assigning `%system` command output to multiple
+  variables via unpacking (#1844).
+
+- reticulate now warns when `py_require()`d packages are not found in the selected
+  Python virtual environment. This behavior can be disabled by setting the environment variable `RETICULATE_CHECK_REQUIRED_PACKAGES=0` (#1850).
 
 # reticulate 1.43.0
 

@@ -175,7 +175,7 @@ py_require <- function(packages = NULL,
 
   action <- match.arg(action)
   called_from_package <- isNamespace(topenv(parent.frame()))
-  ephemeral_venv_initialized <- is_epheremal_venv_initialized()
+  ephemeral_venv_initialized <- is_ephemeral_venv_initialized()
   if (missing(packages))
     packages <- NULL
 
@@ -325,7 +325,7 @@ print.python_requirements <- function(x, ...) {
   }
   python_version <- x$python_version
   if (is.null(python_version)) {
-    if(is_epheremal_venv_initialized()) {
+    if(is_ephemeral_venv_initialized()) {
       python_version <- paste0(
         "[No Python version specified. Defaulted to '",
         resolve_python_version() , "']"
@@ -558,7 +558,7 @@ py_reqs_get <- function(x = NULL) {
     return(pr)
   }
   if (x == "python_version") {
-    if (is_epheremal_venv_initialized())
+    if (is_ephemeral_venv_initialized())
       return(as.character(py_version(TRUE)))
   }
   pr[[x]]
@@ -584,7 +584,10 @@ uv_binary <- function(bootstrap_install = TRUE) {
     uv <- Sys.getenv("RETICULATE_UV", NA)
     if (!is.na(uv)) {
       if (uv == "managed") {
-        on.exit(Sys.setenv(RETICULATE_UV = uv), add = TRUE)
+        on.exit(
+          if(is_usable_uv(uv)) Sys.setenv(RETICULATE_UV = uv),
+          add = TRUE
+        )
         break
       } else {
         return(uv)
@@ -600,7 +603,7 @@ uv_binary <- function(bootstrap_install = TRUE) {
     # observed to be 0.2s for just `uv --version`.
     # This is an approach to avoid paying that cost on each invocation, mostly
     # motivated by uv_run_tool()
-    on.exit(options(reticulate.uv_binary = uv), add = TRUE)
+    on.exit(if(is_usable_uv(uv)) options(reticulate.uv_binary = uv), add = TRUE)
     maybe_clear_reticulate_uv_cache()
 
     uv <- as.character(Sys.which("uv"))
@@ -633,7 +636,11 @@ uv_binary <- function(bootstrap_install = TRUE) {
     ## multiple uv installations attempt to modify that config file.
   }
 
-  if (bootstrap_install) {
+  if (!bootstrap_install) {
+    uv <- NULL
+    return()
+  }
+
     # Install 'uv' in the 'r-reticulate' sub-folder inside the user's cache directory
     # https://github.com/astral-sh/uv/blob/main/docs/configuration/installer.md
 
@@ -676,9 +683,10 @@ uv_binary <- function(bootstrap_install = TRUE) {
       })
 
     }
-  }
 
-  if (file.exists(uv)) uv else NULL # print visible
+  # if we bootstrap-installed successfully, return the path to the uv binary
+  # if not, reset `uv` for the on.exit() hook and return NULL visibly
+  if (file.exists(uv)) uv else (uv <- NULL)
 }
 
 uv_get_or_create_env <- function(packages = py_reqs_get("packages"),
@@ -1049,8 +1057,8 @@ resolve_python_version <- function(constraints = NULL, uv = uv_binary()) {
     msg <- paste0(
       'Requested Python version constraints could not be satisfied.\n',
       '  constraints: "', constraints, '"\n',
-      'Available Python versions found: ', paste0(all_candidates, collapse = ", "), "\n",
-      'Hint: Call `py_require(python_version = <string>, action = "set")` to replace constraints.'
+      'Hint: Call `py_require(python_version = <string>, action = "set")` to replace constraints.\n',
+      'Available Python versions found: ', paste0(all_candidates, collapse = ", "), "\n"
     )
     stop(msg)
   }
