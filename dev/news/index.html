@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">reticulate</a>
 
-    <small class="nav-text text-danger me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="In-development version">1.43.0.9001</small>
+    <small class="nav-text text-danger me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="In-development version">1.44.1.9000</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -46,13 +46,26 @@
 
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="development version" id="reticulate-development-version">reticulate (development version)<a class="anchor" aria-label="anchor" href="#reticulate-development-version"></a></h2>
+</div>
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="1.44.1" id="reticulate-1441">reticulate 1.44.1<a class="anchor" aria-label="anchor" href="#reticulate-1441"></a></h2><p class="text-muted">CRAN release: 2025-11-14</p>
+<ul><li><p>The default Python version in <code><a href="../reference/install_python.html">install_python()</a></code> and <code><a href="../reference/conda-tools.html">conda_create()</a></code> is now 3.12 (<a href="https://github.com/rstudio/reticulate/issues/1862" class="external-link">#1862</a>).</p></li>
+<li><p>Fix error in <code><a href="../reference/virtualenv-tools.html">virtualenv_create()</a></code>/<code><a href="../reference/virtualenv-tools.html">virtualenv_starter()</a></code> (<a href="https://github.com/rstudio/reticulate/issues/1861" class="external-link">#1861</a>).</p></li>
+<li><p>Fix display of Python variables in the Positron Variables Pane (<a href="https://github.com/rstudio/reticulate/issues/1859" class="external-link">#1859</a>).</p></li>
+</ul></div>
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="1.44.0" id="reticulate-1440">reticulate 1.44.0<a class="anchor" aria-label="anchor" href="#reticulate-1440"></a></h2><p class="text-muted">CRAN release: 2025-10-25</p>
 <ul><li><p>Reticulate now clears its cache automatically every 120 days. Configure the interval in <code>.Rprofile</code> with: <code>options(reticulate.max_cache_age = as.difftime(30, units = "days"))</code>.</p></li>
 <li><p><code><a href="../reference/install_miniconda.html">install_miniconda()</a></code> now installs miniforge instead of miniconda (<a href="https://github.com/rstudio/reticulate/issues/1800" class="external-link">#1800</a>, <a href="https://github.com/rstudio/reticulate/issues/1820" class="external-link">#1820</a>).</p></li>
+<li><p>New helpers for reading and writing requirements files, <code><a href="../reference/py_requirements_files.html">py_write_requirements()</a></code> and <code><a href="../reference/py_requirements_files.html">py_read_requirements()</a></code> (<a href="https://github.com/rstudio/reticulate/issues/1846" class="external-link">#1846</a>).</p></li>
 <li><p>Adds support for requesting Python versions with a wildcard pattern <code>x.x.*</code> such as <code>==3.12.*</code> in <code><a href="../reference/virtualenv-tools.html">virtualenv_starter()</a></code>, <code><a href="../reference/py_require.html">py_require()</a></code>, and related functions (<a href="https://github.com/rstudio/reticulate/issues/1825" class="external-link">#1825</a>)</p></li>
 <li><p>Restored compatability with <code>uv</code> versions &gt;= 0.8.0 (<a href="https://github.com/rstudio/reticulate/issues/1818" class="external-link">#1818</a>).</p></li>
+<li><p><code><a href="../reference/virtualenv-tools.html">virtualenv_starter()</a></code> now discovers Python installations managed by external <code>uv</code> installations (<a href="https://github.com/rstudio/reticulate/issues/1849" class="external-link">#1849</a>).</p></li>
 <li><p><code><a href="../reference/py_require.html">py_require()</a></code> now gives a better message when a user erroneously declares a module from the Python standard library as a required package (<a href="https://github.com/lazappi" class="external-link">@lazappi</a>, <a href="https://github.com/rstudio/reticulate/issues/1788" class="external-link">#1788</a>)</p></li>
 <li><p>Positron’s reticulate integration will now be automatically enabled when the reticulate package is loaded in Positron (<a href="https://github.com/rstudio/reticulate/issues/1822" class="external-link">#1822</a>).</p></li>
 <li><p><code><a href="https://rdrr.io/r/base/with.html" class="external-link">with()</a></code> now forwards errors to Python context manager exit handlers (e.g., so database transactions can roll back cleanly) (<a href="https://github.com/rstudio/reticulate/issues/1840" class="external-link">#1840</a>, <a href="https://github.com/rstudio/reticulate/issues/1841" class="external-link">#1841</a>)</p></li>
+<li><p>Fixed <code>!!</code> in string literals being wrongly expanded to a <code>%system</code> magic in <code><a href="../reference/repl_python.html">repl_python()</a></code>. Added support for assigning <code>%system</code> command output to multiple variables via unpacking (<a href="https://github.com/rstudio/reticulate/issues/1844" class="external-link">#1844</a>).</p></li>
+<li><p>reticulate now warns when <code><a href="../reference/py_require.html">py_require()</a></code>d packages are not found in the selected Python virtual environment. This behavior can be disabled by setting the environment variable <code>RETICULATE_CHECK_REQUIRED_PACKAGES=0</code> (<a href="https://github.com/rstudio/reticulate/issues/1850" class="external-link">#1850</a>).</p></li>
 </ul></div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="1.43.0" id="reticulate-1430">reticulate 1.43.0<a class="anchor" aria-label="anchor" href="#reticulate-1430"></a></h2><p class="text-muted">CRAN release: 2025-07-21</p>
@@ -780,7 +793,7 @@
 </div>
 
 <div class="pkgdown-footer-right">
-  <p>Site built with <a href="https://pkgdown.r-lib.org/" class="external-link">pkgdown</a> 2.1.3.</p>
+  <p>Site built with <a href="https://pkgdown.r-lib.org/" class="external-link">pkgdown</a> 2.2.0.</p>
 </div>
 
     </footer></div>
